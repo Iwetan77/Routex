@@ -114,10 +114,13 @@ export class AftermathPool {
     slippage: number,
     walletAddress: string,
     coinInId?: TransactionObjectArgument,
-  ): Promise<TransactionObjectArgument | undefined> {
+  ): Promise<{ tx: Transaction; coinOutId: TransactionObjectArgument | undefined }> {
     await this.ensureInit()
     const router = this.router!
 
+    // Aftermath serialises `tx`, sends it to their routing API, and returns a
+    // BRAND NEW Transaction object — it does not mutate the one we pass in.
+    // Callers must switch to the returned `tx` for all subsequent PTB work.
     const { tx: updatedTx, coinOutId } = await router.addTransactionForCompleteTradeRoute({
       tx,
       completeRoute: route,
@@ -126,8 +129,7 @@ export class AftermathPool {
       ...(coinInId !== undefined ? { coinInId } : {}),
     })
 
-    // `updatedTx` is the same Transaction object mutated in place; we return coinOutId for chaining
-    return coinOutId
+    return { tx: updatedTx, coinOutId }
   }
 
   // ─── Helpers ──────────────────────────────────────────────────────────────

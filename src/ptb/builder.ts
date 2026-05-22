@@ -25,13 +25,13 @@ export class PTBBuilder {
     senderAddress: string,
     slippageTolerance: number,
   ): Promise<Transaction> {
-    const tx = new Transaction()
+    let tx = new Transaction()
     tx.setSender(senderAddress)
 
     if (route.steps.length === 1) {
-      await this.buildSingleStep(tx, route.steps[0], senderAddress, slippageTolerance)
+      tx = await this.buildSingleStep(tx, route.steps[0], senderAddress, slippageTolerance)
     } else {
-      await this.buildMultiStep(tx, route.steps, senderAddress, slippageTolerance)
+      tx = await this.buildMultiStep(tx, route.steps, senderAddress, slippageTolerance)
     }
 
     return tx
@@ -42,7 +42,7 @@ export class PTBBuilder {
     step: RouteStep,
     senderAddress: string,
     slippage: number,
-  ): Promise<void> {
+  ): Promise<Transaction> {
     const minOut = applySlippage(step.amountOut, slippage)
 
     if (step.protocol === 'deepbook') {
@@ -65,10 +65,15 @@ export class PTBBuilder {
       const outCoin = isBaseToCoin ? quoteCoin : baseCoin
       tx.transferObjects([outCoin], senderAddress)
     } else if (step.protocol === 'cetus') {
+      // buildCetusStep transfers to sender internally for single-step
       this.buildCetusStep(tx, step, senderAddress, slippage, null)
     } else if (step.protocol === 'aftermath') {
-      await this.buildAftermathStep(tx, step, senderAddress, slippage, undefined)
+      const { tx: updatedTx, coinOutId } = await this.buildAftermathStep(tx, step, senderAddress, slippage, undefined)
+      tx = updatedTx
+      if (coinOutId) tx.transferObjects([coinOutId], senderAddress)
     }
+
+    return tx
   }
 
   private async buildMultiStep(
@@ -76,7 +81,7 @@ export class PTBBuilder {
     steps: RouteStep[],
     senderAddress: string,
     slippage: number,
-  ): Promise<void> {
+  ): Promise<Transaction> {
     let intermediateCoin: any = null
 
     for (let i = 0; i < steps.length; i++) {
@@ -108,22 +113,30 @@ export class PTBBuilder {
         }
       } else if (step.protocol === 'cetus') {
         intermediateCoin = this.buildCetusStep(tx, step, senderAddress, slippage, intermediateCoin)
-        if (!isLast && !intermediateCoin) {
+        if (isLast && intermediateCoin) {
+          tx.transferObjects([intermediateCoin], senderAddress)
+        } else if (!isLast && !intermediateCoin) {
           throw new Error(`Cetus step ${i} produced no output coin for chaining`)
         }
       } else if (step.protocol === 'aftermath') {
-        intermediateCoin = await this.buildAftermathStep(
+        const { tx: updatedTx, coinOutId } = await this.buildAftermathStep(
           tx,
           step,
           senderAddress,
           slippage,
           intermediateCoin ?? undefined,
         )
-        if (!isLast && !intermediateCoin) {
+        tx = updatedTx
+        intermediateCoin = coinOutId
+        if (isLast && intermediateCoin) {
+          tx.transferObjects([intermediateCoin], senderAddress)
+        } else if (!isLast && !intermediateCoin) {
           throw new Error(`Aftermath step ${i} produced no output coin for chaining`)
         }
       }
     }
+
+    return tx
   }
 
   private buildCetusStep(
@@ -213,7 +226,7 @@ export class PTBBuilder {
     senderAddress: string,
     slippage: number,
     coinInId: any | undefined,
-  ): Promise<any> {
+  ): Promise<{ tx: Transaction; coinOutId: any }> {
     if (!this.aftermathPool) {
       throw new Error('AftermathPool not configured on PTBBuilder')
     }
@@ -225,15 +238,8 @@ export class PTBBuilder {
       )
     }
 
-    const coinOutId = await this.aftermathPool.addSwapToTransaction(
-      tx,
-      route,
-      slippage,
-      senderAddress,
-      coinInId,
-    )
-
-    return coinOutId
+    // Aftermath returns a NEW Transaction — must use it going forward
+    return this.aftermathPool.addSwapToTransaction(tx, route, slippage, senderAddress, coinInId)
   }
 
   applySlippage(amount: bigint, slippage: number): bigint {
