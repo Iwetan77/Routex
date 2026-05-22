@@ -41,6 +41,8 @@ export interface RoutexQuote {
     breakdown: { protocol: string; fee: number }[]
   }
   gasEstimate: bigint
+  /** The slippage tolerance used when this quote was fetched (e.g. 0.005 = 0.5%). */
+  slippageTolerance: number
   ptb: Transaction
   validUntil: number
   routeType: 'direct' | 'single-hop' | 'multi-hop'

@@ -3,6 +3,13 @@ import type { CetusPool } from './cetus.js'
 import type { AftermathPool } from './aftermath.js'
 import type { Token, RouteStep } from '../types.js'
 
+// Belt-and-suspenders: attach .catch to each pool promise so that even if the
+// SDK throws synchronously (before the async boundary) the error is absorbed
+// locally. allSettled provides the outer safety net for async rejections.
+function safe(p: Promise<RouteStep | null>): Promise<RouteStep | null> {
+  return p.catch(() => null)
+}
+
 export class PoolAggregator {
   constructor(
     private deepbook: DeepBookPool,
@@ -29,13 +36,13 @@ export class PoolAggregator {
     const queries: Promise<RouteStep | null>[] = []
 
     if (!excludeProtocols.includes('deepbook')) {
-      queries.push(this.deepbook.getQuote(tokenIn, tokenOut, amountIn))
+      queries.push(safe(this.deepbook.getQuote(tokenIn, tokenOut, amountIn)))
     }
     if (!excludeProtocols.includes('cetus')) {
-      queries.push(this.cetus.getQuote(tokenIn, tokenOut, amountIn))
+      queries.push(safe(this.cetus.getQuote(tokenIn, tokenOut, amountIn)))
     }
     if (this.aftermath && !excludeProtocols.includes('aftermath')) {
-      queries.push(this.aftermath.getQuote(tokenIn, tokenOut, amountIn))
+      queries.push(safe(this.aftermath.getQuote(tokenIn, tokenOut, amountIn)))
     }
 
     const results = await Promise.allSettled(queries)

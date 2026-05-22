@@ -1,3 +1,4 @@
+import { Transaction } from '@mysten/sui/transactions'
 import { DeepBookPool } from './pools/deepbook.js'
 import { CetusPool } from './pools/cetus.js'
 import { AftermathPool } from './pools/aftermath.js'
@@ -6,7 +7,7 @@ import { Pathfinder } from './router/pathfinder.js'
 import { PTBBuilder } from './ptb/builder.js'
 import { PTBExecutor } from './ptb/executor.js'
 import { resolveToken, setNetwork } from './utils/tokens.js'
-import type { GetQuoteParams, ExecuteParams, ExecuteResult, RoutexQuote } from './types.js'
+import type { GetQuoteParams, ExecuteParams, ExecuteResult, Route, RoutexQuote } from './types.js'
 
 export class Routex {
   private aggregator: PoolAggregator
@@ -36,11 +37,12 @@ export class Routex {
 
   async getQuote(params: GetQuoteParams): Promise<RoutexQuote> {
     const quotedAt = Date.now()  // stamp before any network I/O — TTL runs from here
-    const tokenIn = resolveToken(params.from)
+    const tokenIn  = resolveToken(params.from)
     const tokenOut = resolveToken(params.to)
     const amountIn = BigInt(params.amount)
     const slippage = params.slippageTolerance ?? 0.005
-    const senderAddress = params.senderAddress ?? '0x0000000000000000000000000000000000000000000000000000000000000001'
+    const senderAddress = params.senderAddress
+      ?? '0x0000000000000000000000000000000000000000000000000000000000000001'
 
     const route = await this.pathfinder.findBestRoute(
       tokenIn,
@@ -54,8 +56,19 @@ export class Routex {
       throw new Error(`No route found from ${params.from} to ${params.to}`)
     }
 
-    const ptb = await this.ptbBuilder.buildFromRoute(route, senderAddress, slippage)
-    const gasEstimate = await this.ptbBuilder.estimateGas(ptb, senderAddress)
+    // Build PTB for gas estimation. Aftermath's PTB builder validates the sender's
+    // on-chain coin balance, which can fail when using the simulation address.
+    // If building fails we fall back to a stub — execute() always rebuilds with the
+    // real signer address, so the stub PTB is never used for actual execution.
+    let ptb: Transaction
+    let gasEstimate: bigint
+    try {
+      ptb = await this.ptbBuilder.buildFromRoute(route, senderAddress, slippage)
+      gasEstimate = await this.ptbBuilder.estimateGas(ptb, senderAddress)
+    } catch {
+      ptb = new Transaction()
+      gasEstimate = BigInt(5_000_000)  // 0.005 SUI fallback
+    }
 
     return {
       from: tokenIn,
@@ -70,6 +83,7 @@ export class Routex {
         breakdown: route.steps.map(s => ({ protocol: s.protocol, fee: s.fee })),
       },
       gasEstimate,
+      slippageTolerance: slippage,
       ptb,
       validUntil: quotedAt + 30_000,
       routeType: route.type,
@@ -80,7 +94,31 @@ export class Routex {
     if (Date.now() > params.quote.validUntil) {
       throw new Error('Quote expired — call getQuote again.')
     }
-    return this.executor.execute(params.quote.ptb, params.signer)
+
+    // Derive the real sender address from the signer.
+    const senderAddress: string = typeof params.signer.getPublicKey === 'function'
+      ? params.signer.getPublicKey().toSuiAddress()
+      : ''
+
+    // Always rebuild the PTB with the real signer address.
+    // The quote's ptb may have been built with the simulation address (when no
+    // senderAddress was passed to getQuote). Aftermath's addTransactionForCompleteTradeRoute
+    // fetches actual coin objects from the wallet, so it must run with the real address.
+    const internalRoute: Route = {
+      steps:            params.quote.route,
+      type:             params.quote.routeType,
+      totalAmountOut:   params.quote.amountOut,
+      totalPriceImpact: params.quote.priceImpact,
+      totalFees:        params.quote.fees.total,
+    }
+
+    const ptb = await this.ptbBuilder.buildFromRoute(
+      internalRoute,
+      senderAddress,
+      params.quote.slippageTolerance,
+    )
+
+    return this.executor.execute(ptb, params.signer)
   }
 }
 
