@@ -49,11 +49,27 @@ export class AftermathPool {
       await this.ensureInit()
       const router = this.router!
 
-      const route = await router.getCompleteTradeRouteGivenAmountIn({
-        coinInType: tokenIn.type,
-        coinOutType: tokenOut.type,
-        coinInAmount: amountIn,
-      })
+      // Issue main quote and a tiny reference quote concurrently.
+      // The reference uses 1/1000th of the trade amount — small enough that its market
+      // impact is negligible, so its rate ≈ the true spot rate.
+      // Used as a fallback when Aftermath's spotPrice field is 0 (common for many pairs).
+      const refAmountIn = amountIn / 1_000n > 0n ? amountIn / 1_000n : 1n
+
+      const [mainResult, refResult] = await Promise.allSettled([
+        router.getCompleteTradeRouteGivenAmountIn({
+          coinInType: tokenIn.type,
+          coinOutType: tokenOut.type,
+          coinInAmount: amountIn,
+        }),
+        router.getCompleteTradeRouteGivenAmountIn({
+          coinInType: tokenIn.type,
+          coinOutType: tokenOut.type,
+          coinInAmount: refAmountIn,
+        }),
+      ])
+
+      if (mainResult.status === 'rejected') return null
+      const route = mainResult.value
 
       const amountOut = BigInt(route.coinOut.amount)
       if (amountOut === 0n) return null
@@ -62,13 +78,29 @@ export class AftermathPool {
       const key = this.cacheKey(tokenIn, tokenOut, amountIn)
       this.routeCache.set(key, { route, expiry: Date.now() + this.CACHE_TTL })
 
-      // Price impact: compare executed rate against the quoted spot price
-      // spotPrice is "coinOut units per coinIn unit" at current market (no-impact reference)
-      const executedRate = Number(amountOut) / Number(amountIn)
-      const priceImpact =
-        route.spotPrice > 0
-          ? Math.max(0, (route.spotPrice - executedRate) / route.spotPrice)
-          : 0
+      // Work in raw base units — amountIn and amountOut share the same denomination
+      // (each is in its own token's base units), so raw coinOut/coinIn is a consistent ratio.
+      const rawExecutedRate = Number(amountOut) / Number(amountIn)
+
+      let priceImpact = 0
+
+      if (route.spotPrice > 0) {
+        // Aftermath's spotPrice = "raw coinIn per raw coinOut" (inverse of executed rate).
+        // Invert it to get "raw coinOut per coinIn" — the same basis as rawExecutedRate.
+        const rawSpotRate = 1 / route.spotPrice
+        priceImpact = Math.max(0, (rawSpotRate - rawExecutedRate) / rawSpotRate)
+      } else if (refResult.status === 'fulfilled') {
+        // Fallback: derive the spot rate from the tiny reference quote.
+        // priceImpact = how much worse the full-size rate is vs the near-zero-impact rate.
+        const refOut = Number(refResult.value.coinOut.amount)
+        const refIn = Number(refAmountIn)
+        if (refOut > 0 && refIn > 0) {
+          const rawRefRate = refOut / refIn
+          priceImpact = rawRefRate > 0
+            ? Math.max(0, 1 - rawExecutedRate / rawRefRate)
+            : 0
+        }
+      }
 
       return {
         protocol: 'aftermath',

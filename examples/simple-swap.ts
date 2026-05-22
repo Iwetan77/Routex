@@ -14,7 +14,7 @@
 import Routex from '../src/index.js'
 
 const NETWORK  = 'mainnet' as const
-const AMOUNT   = 10_000_000n  // 0.01 SUI in MIST (9 decimals)
+const AMOUNT   = 150_000_000n  // 0.15 SUI in MIST (9 decimals)
 const PRIVKEY  = process.env.SUI_PRIVATE_KEY
 
 async function main(): Promise<void> {

@@ -94,12 +94,17 @@ export class CetusPool {
       const amountInHuman = fromBaseUnits(amountIn, tokenIn)
       const amountOutHuman = fromBaseUnits(amountOut, tokenOut)
 
-      // Price impact via sqrt price change
-      const sqrtPriceCurrent = pool.current_sqrt_price
-      const sqrtPriceAfter = Number(result.estimatedEndSqrtPrice ?? sqrtPriceCurrent)
-      const priceImpact = sqrtPriceCurrent > 0
-        ? Math.abs(sqrtPriceAfter - sqrtPriceCurrent) / sqrtPriceCurrent * 2
-        : 0
+      // Price impact via sqrt price ratio.
+      // Cetus stores sqrtPrice as a Q64.64 fixed-point integer; both current and
+      // post-swap values share the same scale so the ratio cancels the scale factor.
+      // Exact formula: impact = 1 - (sqrtPriceAfter / sqrtPriceCurrent)²
+      // For a2b the sqrt price decreases (ratio < 1 → positive impact).
+      // For b2a the sqrt price increases but we still want a positive impact, so we
+      // clamp at 0 — the rate comparison below already captures that direction.
+      const sqrtPriceCurrent = Number(pool.current_sqrt_price)
+      const sqrtPriceAfter = Number(result.estimatedEndSqrtPrice ?? pool.current_sqrt_price)
+      const sqrtRatio = sqrtPriceCurrent > 0 ? sqrtPriceAfter / sqrtPriceCurrent : 1
+      const priceImpact = Math.min(1, Math.max(0, 1 - sqrtRatio * sqrtRatio))
 
       return {
         protocol: 'cetus',
