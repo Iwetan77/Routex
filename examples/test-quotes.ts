@@ -111,13 +111,25 @@ async function main(): Promise<void> {
     return
   }
 
-  const { label, quote } = valid[0]
-  console.log(`\nExecuting: ${label}`)
-  console.log(`  Expected out : ${fmt(quote)} ${quote.to.symbol}`)
-  console.log(`  Min out (1%) : ${(Number(quote.minimumAmountOut) / quote.to.scalar).toFixed(6)} ${quote.to.symbol}`)
-  console.log(`  Gas estimate : ~${(Number(quote.gasEstimate) / 1e9).toFixed(6)} SUI`)
+  // Re-fetch the target quote right before executing — the table pass above
+  // can take 30-60 s for 6 pairs, which would expire the original TTL.
+  const [from, to, amount] = PAIRS[0]
+  console.log(`\nRefreshing quote for execution...`)
+  const freshQuote = await routex.getQuote({
+    from,
+    to,
+    amount,
+    slippageTolerance: 0.01,
+    senderAddress: address,
+  })
 
-  const result = await routex.execute({ quote, signer: keypair })
+  const label = valid[0].label
+  console.log(`\nExecuting: ${label}`)
+  console.log(`  Expected out : ${fmt(freshQuote)} ${freshQuote.to.symbol}`)
+  console.log(`  Min out (1%) : ${(Number(freshQuote.minimumAmountOut) / freshQuote.to.scalar).toFixed(6)} ${freshQuote.to.symbol}`)
+  console.log(`  Gas estimate : ~${(Number(freshQuote.gasEstimate) / 1e9).toFixed(6)} SUI`)
+
+  const result = await routex.execute({ quote: freshQuote, signer: keypair })
 
   console.log('\n  ✓ Swap executed')
   console.log(`  Digest : ${result.digest}`)
