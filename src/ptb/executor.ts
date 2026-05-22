@@ -10,6 +10,12 @@ export class PTBExecutor {
   }
 
   async execute(ptb: Transaction, signer: any): Promise<ExecuteResult> {
+    // Stamp the real sender before building — overrides any placeholder address
+    // that was set during quote construction (e.g. 0x000...001)
+    if (typeof signer.getPublicKey === 'function') {
+      ptb.setSender(signer.getPublicKey().toSuiAddress())
+    }
+
     const bytes = await ptb.build({ client: this.client as any })
 
     let txBase64: string

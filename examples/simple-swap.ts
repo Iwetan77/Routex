@@ -13,11 +13,21 @@
 
 import Routex from '../src/index.js'
 
-const NETWORK  = 'testnet' as const
-const AMOUNT   = 1_000_000_000n  // 1 SUI in MIST (9 decimals)
+const NETWORK  = 'mainnet' as const
+const AMOUNT   = 10_000_000n  // 0.01 SUI in MIST (9 decimals)
 const PRIVKEY  = process.env.SUI_PRIVATE_KEY
 
 async function main(): Promise<void> {
+  // Derive address early so getQuote builds the PTB with the correct sender
+  let keypair: any = null
+  let address: string | undefined
+
+  if (PRIVKEY) {
+    const { Ed25519Keypair } = await import('@mysten/sui/keypairs/ed25519')
+    keypair = Ed25519Keypair.fromSecretKey(PRIVKEY)
+    address = keypair.getPublicKey().toSuiAddress()
+  }
+
   const routex = new Routex(NETWORK)
 
   console.log('Fetching best SUI → USDC quote across all liquidity sources...\n')
@@ -27,6 +37,7 @@ async function main(): Promise<void> {
     to:   'USDC',
     amount: AMOUNT,
     slippageTolerance: 0.005,  // 0.5%
+    senderAddress: address,
   })
 
   console.log('═══════════════════════════════════════')
@@ -52,16 +63,12 @@ async function main(): Promise<void> {
     console.log(`    ${entry.protocol}: ${(entry.fee * 100).toFixed(3)}%`)
   }
 
-  if (!PRIVKEY) {
+  if (!keypair) {
     console.log('\n  ─────────────────────────────────────────────────────')
     console.log('  Set SUI_PRIVATE_KEY=suiprivkey1... to execute this swap.')
     console.log('  ─────────────────────────────────────────────────────')
     return
   }
-
-  const { Ed25519Keypair } = await import('@mysten/sui/keypairs/ed25519')
-  const keypair = Ed25519Keypair.fromSecretKey(PRIVKEY)
-  const address = keypair.getPublicKey().toSuiAddress()
 
   console.log(`\n  Executing swap from wallet ${address}...`)
 
@@ -71,7 +78,7 @@ async function main(): Promise<void> {
   console.log('  Executed')
   console.log('═══════════════════════════════════════')
   console.log(`  Digest: ${result.digest}`)
-  console.log(`  View  : https://suiscan.xyz/testnet/tx/${result.digest}`)
+  console.log(`  View  : https://suiscan.xyz/${NETWORK}/tx/${result.digest}`)
 }
 
 main().catch(err => {
