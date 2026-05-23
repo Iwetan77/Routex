@@ -1,5 +1,5 @@
 {
-  "name": "@routex/sui",
+  "name": "routex-sui",
   "version": "1.0.0",
   "description": "Headless swap routing for Sui. Best price across all liquidity. Atomic PTB execution.",
   "type": "module",
@@ -32,9 +32,6 @@
     "ptb"
   ],
   "license": "MIT",
-  "publishConfig": {
-    "access": "public"
-  },
   "dependencies": {
     "@cetusprotocol/cetus-sui-clmm-sdk": "^5.4.0",
     "@mysten/deepbook-v3": "^1.4.1",
