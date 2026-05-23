@@ -3,7 +3,7 @@
 Headless swap routing for Sui. Finds the best price across all major liquidity sources and executes atomically via Programmable Transaction Blocks.
 
 ```bash
-npm install @routex/sui
+npm install routex-sui
 ```
 
 ---
@@ -17,7 +17,7 @@ Routex queries **DeepBook V3**, **Cetus**, and **Aftermath Finance** simultaneou
 ## Quick Start
 
 ```typescript
-import Routex from '@routex/sui'
+import Routex from 'routex-sui'
 
 const routex = new Routex('mainnet')
 
