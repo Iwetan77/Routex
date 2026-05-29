@@ -17,13 +17,18 @@ import { fileURLToPath } from 'node:url'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
-const target = resolve(
-  __dirname,
-  '../node_modules/@mysten/sui/dist/client/index.mjs',
-)
+// When installed as a package (node_modules/routex-sui/scripts/),
+// @mysten/sui is a sibling at node_modules/@mysten/sui/ — two levels up.
+// When run from source (routex/scripts/), it lives at routex/node_modules/@mysten/sui/.
+const candidates = [
+  resolve(__dirname, '../../@mysten/sui/dist/client/index.mjs'),      // installed
+  resolve(__dirname, '../node_modules/@mysten/sui/dist/client/index.mjs'), // source
+]
 
-if (!existsSync(target)) {
-  console.log('[routex] patch-sui-compat: target not found, skipping.')
+const target = candidates.find(existsSync) ?? null
+
+if (!target) {
+  console.log('[routex] patch-sui-compat: @mysten/sui not found, skipping.')
   process.exit(0)
 }
 

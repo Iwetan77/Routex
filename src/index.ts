@@ -2,6 +2,10 @@ import { Transaction } from '@mysten/sui/transactions'
 import { DeepBookPool } from './pools/deepbook.js'
 import { CetusPool } from './pools/cetus.js'
 import { AftermathPool } from './pools/aftermath.js'
+import { TurbosPool } from './pools/turbos.js'
+import { FlowXPool } from './pools/flowx.js'
+import { HopPool } from './pools/hop.js'
+import { SevenKProtocolPool } from './pools/sevenkprotocol.js'
 import { PoolAggregator } from './pools/aggregator.js'
 import { Pathfinder } from './router/pathfinder.js'
 import { PTBBuilder } from './ptb/builder.js'
@@ -17,6 +21,10 @@ export class Routex {
   private deepbookPool: DeepBookPool
   private cetusPool: CetusPool
   private aftermathPool: AftermathPool
+  private turbosPool: TurbosPool
+  private flowxPool: FlowXPool
+  private hopPool: HopPool
+  private sevenkPool: SevenKProtocolPool
   private network: 'mainnet' | 'testnet'
 
   constructor(network: 'mainnet' | 'testnet' = 'mainnet', senderAddress?: string) {
@@ -25,7 +33,19 @@ export class Routex {
     this.deepbookPool = new DeepBookPool(network, senderAddress)
     this.cetusPool = new CetusPool(network, senderAddress)
     this.aftermathPool = new AftermathPool(network)
-    this.aggregator = new PoolAggregator(this.deepbookPool, this.cetusPool, this.aftermathPool)
+    this.turbosPool = new TurbosPool(network)
+    this.flowxPool = new FlowXPool(network)
+    this.hopPool = new HopPool(network)
+    this.sevenkPool = new SevenKProtocolPool(network)
+    this.aggregator = new PoolAggregator(
+      this.deepbookPool,
+      this.cetusPool,
+      this.aftermathPool,
+      this.turbosPool,
+      this.hopPool,
+      this.sevenkPool,
+      this.flowxPool,
+    )
     this.pathfinder = new Pathfinder(this.aggregator)
     this.ptbBuilder = new PTBBuilder(network, this.deepbookPool, this.cetusPool, this.aftermathPool)
     this.executor = new PTBExecutor(network)
@@ -36,7 +56,6 @@ export class Routex {
   }
 
   async getQuote(params: GetQuoteParams): Promise<RoutexQuote> {
-    const quotedAt = Date.now()  // stamp before any network I/O — TTL runs from here
     const tokenIn  = resolveToken(params.from)
     const tokenOut = resolveToken(params.to)
     const amountIn = BigInt(params.amount)
@@ -85,7 +104,7 @@ export class Routex {
       gasEstimate,
       slippageTolerance: slippage,
       ptb,
-      validUntil: quotedAt + 30_000,
+      validUntil: Date.now() + 30_000,
       routeType: route.type,
     }
   }

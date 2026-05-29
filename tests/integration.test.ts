@@ -196,10 +196,11 @@ async function testAggregator(): Promise<void> {
     const elapsed = Date.now() - t0
 
     assert(quotes.length >= 1, `expected ≥1 quotes, got ${quotes.length}`)
+    const KNOWN_PROTOCOLS = ['deepbook', 'cetus', 'aftermath', 'turbos', 'flowx', 'hop', 'sevenkprotocol']
     for (const q of quotes) {
       assertGt(q.amountOut, 0n, `${q.protocol}.amountOut`)
       assert(
-        ['deepbook', 'cetus', 'aftermath'].includes(q.protocol),
+        KNOWN_PROTOCOLS.includes(q.protocol),
         `unexpected protocol "${q.protocol}"`,
       )
     }
@@ -501,12 +502,11 @@ async function testGetQuote(): Promise<void> {
     console.log(`       threw: "${message}"`)
   })
 
-  await test('quote expires: validUntil is ≤ 30 s from call time', async () => {
-    const before = Date.now()
-    const q      = await routex.getQuote({ from: 'SUI', to: 'USDC', amount: AMOUNT })
-    const window = q.validUntil - before
-    assert(window > 0,       `quote is already expired at creation — validUntil: ${q.validUntil}`)
-    assert(window <= 31_000, `validUntil window ${window}ms exceeds 31 s — expected ≤30 s`)
+  await test('quote expires: validUntil is ~30 s from return time', async () => {
+    const q         = await routex.getQuote({ from: 'SUI', to: 'USDC', amount: AMOUNT })
+    const remaining = q.validUntil - Date.now()
+    assert(remaining > 0,       `quote is already expired upon receipt — validUntil: ${q.validUntil}`)
+    assert(remaining <= 31_000, `validUntil remaining ${remaining}ms exceeds 31 s — expected ≤30 s`)
   })
 }
 

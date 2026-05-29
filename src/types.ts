@@ -10,7 +10,7 @@ export interface Token {
 }
 
 export interface RouteStep {
-  protocol: 'deepbook' | 'cetus' | 'aftermath' | 'turbos'
+  protocol: 'deepbook' | 'cetus' | 'aftermath' | 'turbos' | 'flowx' | 'hop' | 'sevenkprotocol'
   poolId: string
   tokenIn: Token
   tokenOut: Token

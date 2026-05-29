@@ -1,7 +1,19 @@
 import type { DeepBookPool } from './deepbook.js'
 import type { CetusPool } from './cetus.js'
 import type { AftermathPool } from './aftermath.js'
+import type { TurbosPool } from './turbos.js'
+import type { FlowXPool } from './flowx.js'
+import type { HopPool } from './hop.js'
+import type { SevenKProtocolPool } from './sevenkprotocol.js'
 import type { Token, RouteStep } from '../types.js'
+
+// SKIPPED: navi-aggregator-sdk                      — archived November 2024, read-only
+// SKIPPED: kriya-v3-sdk                            — no documented swap quote API, last published October 2024
+// SKIPPED: @scallop-io/sui-scallop-sdk             — lending SDK only, no swap quote API
+// SKIPPED: @mmt-finance/clmm-sdk (Momentum)        — CLMM liquidity management SDK only, no swap quote API
+// SKIPPED: @bluefin-exchange/bluefin7k-aggregator-sdk — already a transitive dep of @7kprotocol/sdk-ts;
+//   7K Protocol routes through Bluefin liquidity internally. Installing it at the top level
+//   causes @mysten/sui peer-dep conflicts. Bluefin coverage is provided via sevenkprotocol.
 
 // Belt-and-suspenders: attach .catch to each pool promise so that even if the
 // SDK throws synchronously (before the async boundary) the error is absorbed
@@ -15,6 +27,12 @@ export class PoolAggregator {
     private deepbook: DeepBookPool,
     private cetus: CetusPool,
     private aftermath?: AftermathPool,
+    // ─── Tier 1 additions ───────────────────────────────────────────────────
+    private turbos?: TurbosPool,
+    private hop?: HopPool,
+    private sevenkprotocol?: SevenKProtocolPool,
+    // ─── Tier 2 ─────────────────────────────────────────────────────────────
+    private flowx?: FlowXPool,
   ) {}
 
   async getBestQuote(
@@ -35,6 +53,7 @@ export class PoolAggregator {
   ): Promise<RouteStep[]> {
     const queries: Promise<RouteStep | null>[] = []
 
+    // ─── Tier 1 — Primary liquidity sources (audited, established) ───────────
     if (!excludeProtocols.includes('deepbook')) {
       queries.push(safe(this.deepbook.getQuote(tokenIn, tokenOut, amountIn)))
     }
@@ -43,6 +62,20 @@ export class PoolAggregator {
     }
     if (this.aftermath && !excludeProtocols.includes('aftermath')) {
       queries.push(safe(this.aftermath.getQuote(tokenIn, tokenOut, amountIn)))
+    }
+    if (this.turbos && !excludeProtocols.includes('turbos')) {
+      queries.push(safe(this.turbos.getQuote(tokenIn, tokenOut, amountIn)))
+    }
+    if (this.hop && !excludeProtocols.includes('hop')) {
+      queries.push(safe(this.hop.getQuote(tokenIn, tokenOut, amountIn)))
+    }
+    if (this.sevenkprotocol && !excludeProtocols.includes('sevenkprotocol')) {
+      queries.push(safe(this.sevenkprotocol.getQuote(tokenIn, tokenOut, amountIn)))
+    }
+
+    // ─── Tier 2 — Secondary liquidity sources ────────────────────────────────
+    if (this.flowx && !excludeProtocols.includes('flowx')) {
+      queries.push(safe(this.flowx.getQuote(tokenIn, tokenOut, amountIn)))
     }
 
     const results = await Promise.allSettled(queries)

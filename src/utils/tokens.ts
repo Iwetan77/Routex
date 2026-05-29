@@ -87,6 +87,55 @@ const MAINNET_TOKENS: Record<string, Token> = {
     name: 'Wrapped Ether',
     scalar: 100_000_000,
   },
+  // ─── Tokens with coverage on Turbos / FlowX / Hop / 7K ──────────────────
+  WBTC: {
+    address: '0x027792d9fed7f9844eb4839566001bb6f6cb4804f66aa2da6fe1ee242d896881',
+    type: '0x027792d9fed7f9844eb4839566001bb6f6cb4804f66aa2da6fe1ee242d896881::coin::COIN',
+    symbol: 'WBTC',
+    decimals: 8,
+    name: 'Wrapped BTC',
+    scalar: 100_000_000,
+  },
+  BUCK: {
+    address: '0xce7ff77a83ea0cb6fd39bd8748e2ec89a3f41e8efdc3f4eb123e0ca37b184db2',
+    type: '0xce7ff77a83ea0cb6fd39bd8748e2ec89a3f41e8efdc3f4eb123e0ca37b184db2::buck::BUCK',
+    symbol: 'BUCK',
+    decimals: 9,
+    name: 'Bucket USD',
+    scalar: 1_000_000_000,
+  },
+  AUSD: {
+    address: '0x2053d08c1e2bd02791056171aab0fd12bd7cd7efad2ab8f6b9c8902f14129c58',
+    type: '0x2053d08c1e2bd02791056171aab0fd12bd7cd7efad2ab8f6b9c8902f14129c58::ausd::AUSD',
+    symbol: 'AUSD',
+    decimals: 6,
+    name: 'Aurus USD',
+    scalar: 1_000_000,
+  },
+  NAVX: {
+    address: '0xa99b8952d4f7d947ea77fe0ecdcc9e5fc0bcab2841d6e2a5aa00c3044e5544b5',
+    type: '0xa99b8952d4f7d947ea77fe0ecdcc9e5fc0bcab2841d6e2a5aa00c3044e5544b5::navx::NAVX',
+    symbol: 'NAVX',
+    decimals: 9,
+    name: 'NAVI Token',
+    scalar: 1_000_000_000,
+  },
+  HASUI: {
+    address: '0xbde4ba4c2e274a60ce15c1cfff9e5c42e41654ac8b6d906a57efa4bd3c29f47d',
+    type: '0xbde4ba4c2e274a60ce15c1cfff9e5c42e41654ac8b6d906a57efa4bd3c29f47d::hasui::HASUI',
+    symbol: 'HASUI',
+    decimals: 9,
+    name: 'Haedal Staked SUI',
+    scalar: 1_000_000_000,
+  },
+  AFSUI: {
+    address: '0xf325ce1300e8dac124071d3152c5c5ee6174914f8bc2161e88329cf579246efc',
+    type: '0xf325ce1300e8dac124071d3152c5c5ee6174914f8bc2161e88329cf579246efc::afsui::AFSUI',
+    symbol: 'AFSUI',
+    decimals: 9,
+    name: 'Aftermath Finance Staked SUI',
+    scalar: 1_000_000_000,
+  },
 }
 
 let tokenRegistry = TESTNET_TOKENS

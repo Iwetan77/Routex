@@ -10,7 +10,7 @@ npm install routex-sui
 
 ## Overview
 
-Routex queries **DeepBook V3**, **Cetus**, and **Aftermath Finance** simultaneously, selects the route with the highest net output, and constructs a single atomic PTB ready to sign and submit. If any step in a multi-hop route fails on-chain, the entire transaction reverts.
+Routex queries **seven liquidity sources** simultaneously, selects the route with the highest net output, and constructs a single atomic PTB ready to sign and submit. If any step in a multi-hop route fails on-chain, the entire transaction reverts.
 
 ---
 
@@ -101,11 +101,17 @@ Executes the pre-built PTB. Throws if the quote has expired.
 
 ## Supported Protocols
 
-| Protocol | Type | Network |
-|---|---|---|
-| DeepBook V3 | Central limit order book | Mainnet + Testnet |
-| Cetus | Concentrated liquidity AMM | Mainnet |
-| Aftermath Finance | Multi-asset pools | Mainnet |
+| Protocol | Type | Tier | Status |
+|---|---|---|---|
+| DeepBook V3 | Central limit order book | 1 | Mainnet + Testnet |
+| Cetus | Concentrated liquidity AMM | 1 | Mainnet |
+| Aftermath Finance | Multi-asset pools | 1 | Mainnet |
+| Turbos Finance | Concentrated liquidity AMM | 1 | Mainnet |
+| Hop Aggregator | Meta-aggregator | 1 | Mainnet |
+| 7K Protocol | Meta-aggregator (incl. Bluefin) | 1 | Mainnet |
+| FlowX Finance | Multi-pool AMM | 2 | Mainnet |
+
+All sources are queried in parallel via `Promise.allSettled`. A failing source never blocks others — Routex always returns the best available quote.
 
 ---
 
@@ -115,13 +121,14 @@ Executes the pre-built PTB. Throws if the quote has expired.
 getQuote({ from, to, amount })
           │
           ▼
-  ┌───────────────────────────────┐
-  │        Pool Aggregator        │
-  │  DeepBook · Cetus · Aftermath │
-  │  Parallel via Promise.allSettled
-  │  Fault-tolerant — one source  │
-  │  failing never blocks others  │
-  └───────────────────────────────┘
+  ┌─────────────────────────────────────────────────┐
+  │               Pool Aggregator                   │
+  │  DeepBook · Cetus · Aftermath · Turbos · Hop    │
+  │  7K Protocol · FlowX                            │
+  │  Parallel via Promise.allSettled                │
+  │  Fault-tolerant — one source failing            │
+  │  never blocks the others                        │
+  └─────────────────────────────────────────────────┘
           │
           ▼
   ┌───────────────────────────────┐
