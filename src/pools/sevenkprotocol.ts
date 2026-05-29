@@ -1,4 +1,3 @@
-import { MetaAg } from '@7kprotocol/sdk-ts'
 import { type Transaction, coinWithBalance } from '@mysten/sui/transactions'
 import type { Token, RouteStep } from '../types.js'
 
@@ -9,18 +8,30 @@ interface CachedQuote {
 }
 
 export class SevenKProtocolPool {
-  private metaAg: MetaAg
+  // Lazy-loaded to avoid static-import failures when the consumer's @mysten/sui
+  // version doesn't match what @7kprotocol/sdk-ts was built against.
+  private metaAgPromise: Promise<any> | null = null
   private quoteCache = new Map<string, CachedQuote>()
   private readonly CACHE_TTL = 30_000
 
-  constructor(private readonly network: 'mainnet' | 'testnet') {
-    // 7K only supports mainnet; testnet calls will return null
-    this.metaAg = new MetaAg()
+  constructor(private readonly network: 'mainnet' | 'testnet') {}
+
+  private getMetaAg(): Promise<any> {
+    if (!this.metaAgPromise) {
+      this.metaAgPromise = import('@7kprotocol/sdk-ts')
+        .then(mod => new mod.MetaAg())
+        .catch(err => {
+          this.metaAgPromise = null
+          throw err
+        })
+    }
+    return this.metaAgPromise
   }
 
   async getQuote(tokenIn: Token, tokenOut: Token, amountIn: bigint): Promise<RouteStep | null> {
     try {
-      const quotes = await this.metaAg.quote({
+      const metaAg = await this.getMetaAg()
+      const quotes = await metaAg.quote({
         coinTypeIn: tokenIn.type,
         coinTypeOut: tokenOut.type,
         amountIn: amountIn.toString(),
@@ -31,8 +42,8 @@ export class SevenKProtocolPool {
 
       // Sort by amountOut descending; prefer simulatedAmountOut when available
       const best = quotes
-        .filter(q => BigInt(q.amountOut) > 0n)
-        .sort((a, b) => {
+        .filter((q: any) => BigInt(q.amountOut) > 0n)
+        .sort((a: any, b: any) => {
           const aOut = BigInt(a.simulatedAmountOut ?? a.amountOut)
           const bOut = BigInt(b.simulatedAmountOut ?? b.amountOut)
           return bOut > aOut ? 1 : bOut < aOut ? -1 : 0
@@ -54,8 +65,7 @@ export class SevenKProtocolPool {
         ? Math.max(0, Number(rawOut - simOut) / Number(rawOut))
         : 0
 
-      // Gas fee estimate as proxy for fee (not perfect but reasonable)
-      const fee = 0.003 // 0.3 % default; providers may vary
+      const fee = 0.003 // 0.3% default
 
       return {
         protocol: 'sevenkprotocol',
@@ -78,10 +88,6 @@ export class SevenKProtocolPool {
     return entry.metaQuote
   }
 
-  /**
-   * Append the 7K swap to an existing Transaction.
-   * Returns the output coin argument for chaining in a PTB.
-   */
   async addSwapToTransaction(
     tx: Transaction,
     tokenIn: Token,
@@ -90,20 +96,18 @@ export class SevenKProtocolPool {
     senderAddress: string,
     slippageBps: number = 100,
   ): Promise<{ tx: Transaction; coinOutId: any }> {
+    const metaAg = await this.getMetaAg()
     const cachedQuote = this.getCachedQuote(tokenIn, tokenOut, amountIn)
     if (!cachedQuote) {
       throw new Error('7K quote cache miss — call getQuote first.')
     }
 
-    // coinWithBalance returns a type compatible at runtime; cast to any to
-    // avoid the dual-package @mysten/sui type-identity conflict between this
-    // project's sui@^2.x and the version bundled inside @pythnetwork (7K dep).
     const coinIn = coinWithBalance({
       balance: amountIn,
       type: tokenIn.type,
     }) as any
 
-    const coinOut = await this.metaAg.swap(
+    const coinOut = await metaAg.swap(
       {
         quote: cachedQuote,
         signer: senderAddress,
