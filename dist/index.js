@@ -543,7 +543,12 @@ var TurbosPool = class {
       return this.poolCache.get(key) ?? [];
     }
     try {
-      const allPools = await this.sdk.pool.getPools();
+      const allPools = await Promise.race([
+        this.sdk.pool.getPools(),
+        new Promise(
+          (_, reject) => setTimeout(() => reject(new Error("Turbos getPools timeout")), 4e3)
+        )
+      ]);
       const matching = allPools.filter((p) => {
         const types = p.types ?? [];
         return types.includes(tokenIn.type) && types.includes(tokenOut.type);
@@ -881,12 +886,8 @@ var SevenKProtocolPool = class {
 };
 
 // src/pools/aggregator.ts
-var PROTOCOL_TIMEOUT_MS = 5e3;
 function safe(p) {
-  return Promise.race([
-    p.catch(() => null),
-    new Promise((resolve) => setTimeout(() => resolve(null), PROTOCOL_TIMEOUT_MS))
-  ]);
+  return p.catch(() => null);
 }
 var PoolAggregator = class {
   constructor(deepbook, cetus, aftermath, turbos, hop, sevenkprotocol, flowx) {

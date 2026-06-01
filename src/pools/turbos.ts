@@ -36,8 +36,15 @@ export class TurbosPool {
     }
 
     try {
-      // getPools() returns all pools (no filter by coin pair in the SDK)
-      const allPools = await this.sdk.pool.getPools()
+      // getPools() fetches every Turbos pool from on-chain — no pair filter in
+      // the SDK. This can hang for 30+ seconds on cold calls. Race it against a
+      // 4 s deadline so a slow RPC node doesn't block the other protocols.
+      const allPools = await Promise.race([
+        this.sdk.pool.getPools(),
+        new Promise<PoolRecord[]>((_, reject) =>
+          setTimeout(() => reject(new Error('Turbos getPools timeout')), 4_000)
+        ),
+      ])
       const matching = allPools.filter(p => {
         const types: string[] = p.types ?? []
         return types.includes(tokenIn.type) && types.includes(tokenOut.type)
