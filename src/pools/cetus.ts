@@ -33,7 +33,15 @@ export class CetusPool {
     }
 
     try {
-      const pools = await this.sdk.Pool.getPoolByCoins([tokenIn.type, tokenOut.type])
+      // getPoolByCoins fetches all Cetus pools from the RPC and can hang for
+      // 30+ seconds on cold calls. Race it against a 4 s deadline so a slow
+      // Cetus RPC doesn't block the other protocols in the aggregator.
+      const pools = await Promise.race([
+        this.sdk.Pool.getPoolByCoins([tokenIn.type, tokenOut.type]),
+        new Promise<Pool[]>((_, reject) =>
+          setTimeout(() => reject(new Error('Cetus pool fetch timeout')), 4_000)
+        ),
+      ])
       const active = pools.filter(p => !p.is_pause && p.liquidity > 0)
       this.poolCache.set(key, active)
       this.cacheExpiry.set(key, Date.now() + this.CACHE_TTL)

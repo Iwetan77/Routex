@@ -28,13 +28,19 @@ export class AftermathPool {
     if (this.router !== null) return Promise.resolve()
     if (this.initPromise) return this.initPromise
 
-    this.initPromise = this.sdk
-      .init()
+    // sdk.init() fetches Aftermath pool metadata and can hang indefinitely.
+    // Race it against a 5 s deadline; on timeout the promise rejects so
+    // the caller catches and returns null (same as a network error).
+    this.initPromise = Promise.race([
+      this.sdk.init(),
+      new Promise<void>((_, reject) =>
+        setTimeout(() => reject(new Error('Aftermath init timeout')), 5_000)
+      ),
+    ])
       .then(() => {
         this.router = this.sdk.Router()
       })
       .catch(err => {
-        // Reset so the next call retries rather than hanging forever
         this.initPromise = null
         throw err
       })
@@ -55,17 +61,27 @@ export class AftermathPool {
       // Used as a fallback when Aftermath's spotPrice field is 0 (common for many pairs).
       const refAmountIn = amountIn / 1_000n > 0n ? amountIn / 1_000n : 1n
 
+      // getCompleteTradeRouteGivenAmountIn calls Aftermath's router API and
+      // can hang if their service is slow. Cap each call at 5 s.
+      const withDeadline = <T>(p: Promise<T>): Promise<T> =>
+        Promise.race([
+          p,
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error('Aftermath router timeout')), 5_000)
+          ),
+        ])
+
       const [mainResult, refResult] = await Promise.allSettled([
-        router.getCompleteTradeRouteGivenAmountIn({
+        withDeadline(router.getCompleteTradeRouteGivenAmountIn({
           coinInType: tokenIn.type,
           coinOutType: tokenOut.type,
           coinInAmount: amountIn,
-        }),
-        router.getCompleteTradeRouteGivenAmountIn({
+        })),
+        withDeadline(router.getCompleteTradeRouteGivenAmountIn({
           coinInType: tokenIn.type,
           coinOutType: tokenOut.type,
           coinInAmount: refAmountIn,
-        }),
+        })),
       ])
 
       if (mainResult.status === 'rejected') return null

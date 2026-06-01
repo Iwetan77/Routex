@@ -15,11 +15,17 @@ import type { Token, RouteStep } from '../types.js'
 //   7K Protocol routes through Bluefin liquidity internally. Installing it at the top level
 //   causes @mysten/sui peer-dep conflicts. Bluefin coverage is provided via sevenkprotocol.
 
-// Belt-and-suspenders: attach .catch to each pool promise so that even if the
-// SDK throws synchronously (before the async boundary) the error is absorbed
-// locally. allSettled provides the outer safety net for async rejections.
+// Per-protocol deadline. Any DEX that doesn't respond within this window
+// resolves to null so it's excluded from results without blocking others.
+// Cetus (pool list fetch) and Aftermath (SDK init + router API) can hang for
+// 30+ seconds without ever rejecting — .catch() alone is not enough.
+const PROTOCOL_TIMEOUT_MS = 5_000
+
 function safe(p: Promise<RouteStep | null>): Promise<RouteStep | null> {
-  return p.catch(() => null)
+  return Promise.race([
+    p.catch(() => null),
+    new Promise<null>(resolve => setTimeout(() => resolve(null), PROTOCOL_TIMEOUT_MS)),
+  ])
 }
 
 export class PoolAggregator {
