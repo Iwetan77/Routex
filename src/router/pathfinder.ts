@@ -5,6 +5,11 @@ import { getTokenBySymbol } from '../utils/tokens.js'
 // Common bridge tokens for single-hop routing
 const BRIDGE_TOKENS = ['USDC', 'SUI', 'USDT', 'DBUSDC']
 
+// Per-hop deadline — a hop makes 2 sequential getBestQuote calls, each up to
+// PROTOCOL_TIMEOUT_MS (5 s), so a single hop can take up to 10 s worst-case.
+// Cap it at 8 s so it still fits within the outer 12 s ceiling.
+const HOP_TIMEOUT_MS = 8_000
+
 export class Pathfinder {
   constructor(private aggregator: PoolAggregator) {}
 
@@ -15,15 +20,23 @@ export class Pathfinder {
     maxHops: number = 3,
     excludeProtocols: string[] = [],
   ): Promise<Route | null> {
-    const routes: Route[] = []
+    const bridgeSymbols = maxHops >= 2
+      ? BRIDGE_TOKENS.filter(sym => sym !== tokenIn.symbol && sym !== tokenOut.symbol)
+      : []
 
-    // 1. Direct route
-    const directStep = await this.aggregator.getBestQuote(
-      tokenIn,
-      tokenOut,
-      amountIn,
-      excludeProtocols,
-    )
+    // Run direct quote and all bridge-hop attempts concurrently.
+    // Previously the direct quote ran first (sequential) then hops ran in
+    // parallel — 5 s direct + 10 s per hop = 15 s worst case, blowing past
+    // the 12 s outer deadline. Running everything in parallel cuts that to
+    // max(5 s direct, 8 s hop) = 8 s worst case.
+    const [directStep, ...hopRoutes] = await Promise.all([
+      this.aggregator.getBestQuote(tokenIn, tokenOut, amountIn, excludeProtocols),
+      ...bridgeSymbols.map(sym =>
+        this.tryHop(tokenIn, tokenOut, amountIn, sym, excludeProtocols)
+      ),
+    ])
+
+    const routes: Route[] = []
 
     if (directStep) {
       routes.push({
@@ -35,17 +48,8 @@ export class Pathfinder {
       })
     }
 
-    // 2. Single-hop routes via bridge tokens
-    if (maxHops >= 2) {
-      const hopResults = await Promise.allSettled(
-        BRIDGE_TOKENS
-          .filter(sym => sym !== tokenIn.symbol && sym !== tokenOut.symbol)
-          .map(sym => this.tryHop(tokenIn, tokenOut, amountIn, sym, excludeProtocols)),
-      )
-
-      for (const r of hopResults) {
-        if (r.status === 'fulfilled' && r.value) routes.push(r.value)
-      }
+    for (const route of hopRoutes) {
+      if (route) routes.push(route)
     }
 
     if (routes.length === 0) return null
@@ -65,6 +69,23 @@ export class Pathfinder {
     const bridge = getTokenBySymbol(bridgeSymbol)
     if (!bridge) return null
 
+    try {
+      return await Promise.race([
+        this._tryHopInternal(tokenIn, tokenOut, amountIn, bridge, excludeProtocols),
+        new Promise<null>(resolve => setTimeout(() => resolve(null), HOP_TIMEOUT_MS)),
+      ])
+    } catch {
+      return null
+    }
+  }
+
+  private async _tryHopInternal(
+    tokenIn: Token,
+    tokenOut: Token,
+    amountIn: bigint,
+    bridge: Token,
+    excludeProtocols: string[],
+  ): Promise<Route | null> {
     const leg1 = await this.aggregator.getBestQuote(tokenIn, bridge, amountIn, excludeProtocols)
     if (!leg1) return null
 

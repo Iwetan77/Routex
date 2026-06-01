@@ -941,19 +941,21 @@ var PoolAggregator = class {
 
 // src/router/pathfinder.ts
 var BRIDGE_TOKENS = ["USDC", "SUI", "USDT", "DBUSDC"];
+var HOP_TIMEOUT_MS = 8e3;
 var Pathfinder = class {
   constructor(aggregator) {
     this.aggregator = aggregator;
   }
   aggregator;
   async findBestRoute(tokenIn, tokenOut, amountIn, maxHops = 3, excludeProtocols = []) {
+    const bridgeSymbols = maxHops >= 2 ? BRIDGE_TOKENS.filter((sym) => sym !== tokenIn.symbol && sym !== tokenOut.symbol) : [];
+    const [directStep, ...hopRoutes] = await Promise.all([
+      this.aggregator.getBestQuote(tokenIn, tokenOut, amountIn, excludeProtocols),
+      ...bridgeSymbols.map(
+        (sym) => this.tryHop(tokenIn, tokenOut, amountIn, sym, excludeProtocols)
+      )
+    ]);
     const routes = [];
-    const directStep = await this.aggregator.getBestQuote(
-      tokenIn,
-      tokenOut,
-      amountIn,
-      excludeProtocols
-    );
     if (directStep) {
       routes.push({
         steps: [directStep],
@@ -963,13 +965,8 @@ var Pathfinder = class {
         totalFees: directStep.fee
       });
     }
-    if (maxHops >= 2) {
-      const hopResults = await Promise.allSettled(
-        BRIDGE_TOKENS.filter((sym) => sym !== tokenIn.symbol && sym !== tokenOut.symbol).map((sym) => this.tryHop(tokenIn, tokenOut, amountIn, sym, excludeProtocols))
-      );
-      for (const r of hopResults) {
-        if (r.status === "fulfilled" && r.value) routes.push(r.value);
-      }
+    for (const route of hopRoutes) {
+      if (route) routes.push(route);
     }
     if (routes.length === 0) return null;
     return routes.reduce(
@@ -979,6 +976,16 @@ var Pathfinder = class {
   async tryHop(tokenIn, tokenOut, amountIn, bridgeSymbol, excludeProtocols) {
     const bridge = getTokenBySymbol(bridgeSymbol);
     if (!bridge) return null;
+    try {
+      return await Promise.race([
+        this._tryHopInternal(tokenIn, tokenOut, amountIn, bridge, excludeProtocols),
+        new Promise((resolve) => setTimeout(() => resolve(null), HOP_TIMEOUT_MS))
+      ]);
+    } catch {
+      return null;
+    }
+  }
+  async _tryHopInternal(tokenIn, tokenOut, amountIn, bridge, excludeProtocols) {
     const leg1 = await this.aggregator.getBestQuote(tokenIn, bridge, amountIn, excludeProtocols);
     if (!leg1) return null;
     const leg2 = await this.aggregator.getBestQuote(bridge, tokenOut, leg1.amountOut, excludeProtocols);
@@ -1189,9 +1196,12 @@ var PTBBuilder = class {
     try {
       ptb.setSender(senderAddress);
       const bytes = await ptb.build({ client: this.suiClient });
-      const dryRun = await this.suiClient.dryRunTransactionBlock({
-        transactionBlock: bytes
-      });
+      const dryRun = await Promise.race([
+        this.suiClient.dryRunTransactionBlock({ transactionBlock: bytes }),
+        new Promise(
+          (_, reject) => setTimeout(() => reject(new Error("Gas estimate timeout")), 4e3)
+        )
+      ]);
       const gasUsed = dryRun.effects.gasUsed;
       return BigInt(gasUsed.computationCost) + BigInt(gasUsed.storageCost);
     } catch {
