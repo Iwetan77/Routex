@@ -6,9 +6,10 @@ import { getTokenBySymbol } from '../utils/tokens.js'
 const BRIDGE_TOKENS = ['USDC', 'SUI', 'USDT', 'DBUSDC']
 
 // Per-hop deadline — a hop makes 2 sequential getBestQuote calls, each up to
-// PROTOCOL_TIMEOUT_MS (5 s), so a single hop can take up to 10 s worst-case.
-// Cap it at 8 s so it still fits within the outer 12 s ceiling.
-const HOP_TIMEOUT_MS = 8_000
+// ~5 s (7K internal timeout), so worst-case ~10 s per hop.
+// Cap at 6 s: any promising bridge leg resolves in 1-3 s; if nothing responds
+// by 6 s the direct route (which completes in ~5 s) is already the winner.
+const HOP_TIMEOUT_MS = 6_000
 
 export class Pathfinder {
   constructor(private aggregator: PoolAggregator) {}

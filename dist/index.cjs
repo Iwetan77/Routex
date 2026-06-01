@@ -979,7 +979,7 @@ var PoolAggregator = class {
 
 // src/router/pathfinder.ts
 var BRIDGE_TOKENS = ["USDC", "SUI", "USDT", "DBUSDC"];
-var HOP_TIMEOUT_MS = 8e3;
+var HOP_TIMEOUT_MS = 6e3;
 var Pathfinder = class {
   constructor(aggregator) {
     this.aggregator = aggregator;
@@ -1237,7 +1237,7 @@ var PTBBuilder = class {
       const dryRun = await Promise.race([
         this.suiClient.dryRunTransactionBlock({ transactionBlock: bytes }),
         new Promise(
-          (_, reject) => setTimeout(() => reject(new Error("Gas estimate timeout")), 4e3)
+          (_, reject) => setTimeout(() => reject(new Error("Gas estimate timeout")), 2e3)
         )
       ]);
       const gasUsed = dryRun.effects.gasUsed;

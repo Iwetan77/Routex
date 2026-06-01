@@ -250,12 +250,11 @@ export class PTBBuilder {
     try {
       ptb.setSender(senderAddress)
       const bytes = await ptb.build({ client: this.suiClient as any })
-      // dryRunTransactionBlock is a live RPC call — cap it at 4 s so a slow
-      // node doesn't push us past the outer getQuote deadline.
+      // dryRunTransactionBlock is a live RPC call — cap it at 2 s.
       const dryRun = await Promise.race([
         this.suiClient.dryRunTransactionBlock({ transactionBlock: bytes }),
         new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error('Gas estimate timeout')), 4_000)
+          setTimeout(() => reject(new Error('Gas estimate timeout')), 2_000)
         ),
       ])
       const gasUsed = dryRun.effects.gasUsed
