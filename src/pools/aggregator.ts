@@ -25,15 +25,32 @@ function safe(p: Promise<RouteStep | null>): Promise<RouteStep | null> {
 }
 
 /**
- * Protocols that are NOT YET wired into the PTB builder. Their SDKs return
- * standalone Transaction objects that can't be composed into our PTB chain
- * without a deeper SDK integration, so quoting through them would produce a
- * route the caller can't execute. They're always force-excluded from quoting
- * until proper PTB builders land. To opt in (e.g. for off-chain analytics),
- * call `getAllQuotes(..., excludeProtocols)` directly on the aggregator with
- * the unsupported ones left out — but do NOT execute the resulting route.
+ * Protocols that cannot currently be used for end-to-end quote → build → execute:
+ *
+ *  - `turbos`, `flowx`, `hop`: their SDKs return standalone Transaction objects
+ *    that can't be composed into our PTB chain without a deeper integration.
+ *
+ *  - `cetus`: @cetusprotocol/cetus-sui-clmm-sdk v5 (latest) pins `@mysten/sui`
+ *    ^1.21.1. routex uses @mysten/sui v2. The two majors have an incompatible
+ *    BCS schema — Cetus's preswap PTB fails BCS validation with
+ *    "Expected object, found undefined" on every quote attempt, regardless of
+ *    pair or amount. Two distinct upstream bugs make this worse:
+ *      (a) `api-sui.cetus.zone/v2/sui/stats_pools` returns malformed JSON,
+ *          breaking `getPoolByCoins` — we work around this with an on-chain
+ *          pool registry (see KNOWN_MAINNET_POOLS in pools/cetus.ts).
+ *      (b) Cetus SDK's NamedPackagesPlugin calls `hasMvrName(tag.address)`
+ *          with undefined input — we work around this with a post-install
+ *          patch (see scripts/patch-sui-compat.mjs).
+ *    Even with both workarounds, the BCS schema mismatch can't be patched
+ *    from outside. Cetus's liquidity remains accessible through 7K Protocol
+ *    (sevenkprotocol), which aggregates Cetus internally with its own SDK.
+ *    Re-enable cetus here once Cetus ships a @mysten/sui v2-compatible SDK.
+ *
+ * To force-include any of these for off-chain analytics, call the aggregator's
+ * `getAllQuotes` directly with the protocol omitted from `excludeProtocols` —
+ * but DO NOT execute the resulting route through Routex.execute().
  */
-const UNBUILDABLE_PROTOCOLS = ['turbos', 'flowx', 'hop'] as const
+const UNBUILDABLE_PROTOCOLS = ['turbos', 'flowx', 'hop', 'cetus'] as const
 
 export class PoolAggregator {
   constructor(

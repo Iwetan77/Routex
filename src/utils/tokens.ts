@@ -1,4 +1,23 @@
+import { normalizeStructTag } from '@mysten/sui/utils'
 import type { Token } from '../types.js'
+
+/**
+ * Normalize a Sui struct/coin type string so that `0x2::sui::SUI` and
+ * `0x0000…0002::sui::SUI` compare equal. Wraps `normalizeStructTag` from
+ * `@mysten/sui/utils` with a safe fallback when given malformed input.
+ */
+export function normalizeCoinType(type: string): string {
+  try {
+    return normalizeStructTag(type)
+  } catch {
+    return type
+  }
+}
+
+/** True if two Sui coin/struct type strings refer to the same type, regardless of address short/long form. */
+export function coinTypesEqual(a: string, b: string): boolean {
+  return normalizeCoinType(a) === normalizeCoinType(b)
+}
 
 // Testnet token registry (DeepBook V3 testnet coins)
 const TESTNET_TOKENS: Record<string, Token> = {

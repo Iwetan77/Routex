@@ -1,27 +1,77 @@
 import { initCetusSDK, type CetusClmmSDK, type Pool } from '@cetusprotocol/cetus-sui-clmm-sdk'
 import BN from 'bn.js'
 import type { Token, RouteStep } from '../types.js'
-import { fromBaseUnits } from '../utils/tokens.js'
+import { fromBaseUnits, normalizeCoinType, coinTypesEqual } from '../utils/tokens.js'
+
+/**
+ * Curated mainnet Cetus pool IDs for major bridge-token pairs.
+ * Cetus's official stats API (`api-sui.cetus.zone/v2/sui/stats_pools`) has been
+ * returning malformed JSON ("Failed tp [arse response"), which makes the SDK's
+ * `getPoolByCoins` unusable. As a fallback we look these up directly on-chain
+ * via `sdk.Pool.getPool(id)`, which uses Sui RPC `getObject` and bypasses the
+ * broken stats service entirely.
+ *
+ * Each entry must be verified: the on-chain pool's coinTypeA/B (normalized)
+ * must match one of the two pair tokens. Pools that fail validation are
+ * silently skipped — only verified pools enter the cache.
+ *
+ * To extend: call `CetusPool.registerKnownPool(poolId)` on an instance, or
+ * append to this list and rebuild. PRs welcome — the format is just pool IDs.
+ */
+const KNOWN_MAINNET_POOLS: string[] = [
+  // SUI/USDC — verified high-liquidity pool (TVL ~$15M+).
+  '0xb8d7d9e66a60c239e7a60110efcf8de6c705580ed924d0dde141f4a0e2c90105',
+]
 
 export class CetusPool {
   private sdk: CetusClmmSDK
   private poolCache: Map<string, Pool[]> = new Map()
   private cacheExpiry: Map<string, number> = new Map()
   private readonly CACHE_TTL = 30_000 // 30 seconds
+  private knownPoolIds: string[]
+  /** Cache the resolved Pool object for each known pool ID so we don't re-fetch every time. */
+  private knownPoolObjects: Map<string, Pool> = new Map()
 
-  constructor(network: 'mainnet' | 'testnet', senderAddress?: string) {
+  constructor(
+    private readonly network: 'mainnet' | 'testnet',
+    senderAddress?: string,
+  ) {
     this.sdk = initCetusSDK({
       network,
       wallet: senderAddress ?? '0x0000000000000000000000000000000000000000000000000000000000000001',
     })
+    // Only seed the known-pool registry on mainnet — the curated IDs are mainnet only.
+    this.knownPoolIds = network === 'mainnet' ? [...KNOWN_MAINNET_POOLS] : []
   }
 
   updateSender(address: string) {
     this.sdk.senderAddress = address
   }
 
+  /** Add a known Cetus pool ID for on-chain fallback discovery. */
+  registerKnownPool(poolId: string): void {
+    if (!this.knownPoolIds.includes(poolId)) this.knownPoolIds.push(poolId)
+  }
+
   private cacheKey(typeA: string, typeB: string): string {
-    return [typeA, typeB].sort().join('|')
+    return [normalizeCoinType(typeA), normalizeCoinType(typeB)].sort().join('|')
+  }
+
+  /** Fetch a known pool object once, cache it for the lifetime of the CetusPool instance. */
+  private async getKnownPool(poolId: string): Promise<Pool | null> {
+    if (this.knownPoolObjects.has(poolId)) return this.knownPoolObjects.get(poolId)!
+    try {
+      const pool = await Promise.race([
+        this.sdk.Pool.getPool(poolId, true),
+        new Promise<Pool>((_, reject) =>
+          setTimeout(() => reject(new Error('Cetus getPool timeout')), 4_000)
+        ),
+      ])
+      if (pool) this.knownPoolObjects.set(poolId, pool)
+      return pool ?? null
+    } catch {
+      return null
+    }
   }
 
   private async getPoolsForPair(tokenIn: Token, tokenOut: Token): Promise<Pool[]> {
@@ -32,23 +82,41 @@ export class CetusPool {
       return this.poolCache.get(key)!
     }
 
+    // 1. Try Cetus's stats-API-backed discovery first. When their service is
+    //    healthy this returns every pool for the pair, including ones not in
+    //    our hardcoded registry. We race it against a 4 s deadline.
+    let pools: Pool[] = []
     try {
-      // getPoolByCoins fetches all Cetus pools from the RPC and can hang for
-      // 30+ seconds on cold calls. Race it against a 4 s deadline so a slow
-      // Cetus RPC doesn't block the other protocols in the aggregator.
-      const pools = await Promise.race([
+      pools = await Promise.race([
         this.sdk.Pool.getPoolByCoins([tokenIn.type, tokenOut.type]),
         new Promise<Pool[]>((_, reject) =>
           setTimeout(() => reject(new Error('Cetus pool fetch timeout')), 4_000)
         ),
       ])
-      const active = pools.filter(p => !p.is_pause && p.liquidity > 0)
-      this.poolCache.set(key, active)
-      this.cacheExpiry.set(key, Date.now() + this.CACHE_TTL)
-      return active
     } catch {
-      return []
+      pools = []
     }
+
+    // 2. Fall back to the known-pool registry. We fetch each known pool by ID
+    //    via on-chain RPC (no API dependency) and filter for ones that match
+    //    the requested pair. This is what keeps Cetus working when Cetus's
+    //    own stats API is broken.
+    if (pools.length === 0 && this.knownPoolIds.length > 0) {
+      const candidates = await Promise.all(
+        this.knownPoolIds.map(id => this.getKnownPool(id)),
+      )
+      pools = candidates
+        .filter((p): p is Pool => p !== null)
+        .filter(p =>
+          (coinTypesEqual(p.coinTypeA, tokenIn.type)  && coinTypesEqual(p.coinTypeB, tokenOut.type)) ||
+          (coinTypesEqual(p.coinTypeA, tokenOut.type) && coinTypesEqual(p.coinTypeB, tokenIn.type))
+        )
+    }
+
+    const active = pools.filter(p => !p.is_pause && p.liquidity > 0)
+    this.poolCache.set(key, active)
+    this.cacheExpiry.set(key, Date.now() + this.CACHE_TTL)
+    return active
   }
 
   async getQuote(tokenIn: Token, tokenOut: Token, amountIn: bigint): Promise<RouteStep | null> {
@@ -80,7 +148,8 @@ export class CetusPool {
     amountIn: bigint,
   ): Promise<RouteStep | null> {
     try {
-      const a2b = pool.coinTypeA === tokenIn.type
+      // Compare normalized types so `0x2::sui::SUI` matches `0x0000…0002::sui::SUI`.
+      const a2b = coinTypesEqual(pool.coinTypeA, tokenIn.type)
       const decimalsA = a2b ? tokenIn.decimals : tokenOut.decimals
       const decimalsB = a2b ? tokenOut.decimals : tokenIn.decimals
 
@@ -131,6 +200,16 @@ export class CetusPool {
 
   getSdk(): CetusClmmSDK {
     return this.sdk
+  }
+
+  /**
+   * Fetch a Cetus pool object directly from chain by ID. Used by the PTB
+   * builder to read the authoritative `coinTypeA`/`coinTypeB` ordering
+   * (which determines the `a2b` swap direction). Cached for the lifetime
+   * of this CetusPool instance.
+   */
+  async getPool(poolId: string): Promise<Pool | null> {
+    return this.getKnownPool(poolId)
   }
 
   async getPoolForPair(tokenIn: Token, tokenOut: Token): Promise<Pool | null> {

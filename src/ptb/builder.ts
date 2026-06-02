@@ -7,7 +7,7 @@ import type { AftermathPool } from '../pools/aftermath.js'
 import type { SevenKProtocolPool } from '../pools/sevenkprotocol.js'
 import type { Route, RouteStep } from '../types.js'
 import { applySlippage } from '../utils/math.js'
-import { fromBaseUnits } from '../utils/tokens.js'
+import { fromBaseUnits, coinTypesEqual } from '../utils/tokens.js'
 
 /** Protocols the PTB builder can actually emit transaction calls for. */
 export const BUILDABLE_PROTOCOLS = ['deepbook', 'cetus', 'aftermath', 'sevenkprotocol'] as const
@@ -72,7 +72,7 @@ export class PTBBuilder {
       tx.transferObjects([outCoin], senderAddress)
     } else if (step.protocol === 'cetus') {
       // buildCetusStep transfers to sender internally for single-step
-      this.buildCetusStep(tx, step, senderAddress, slippage, null)
+      await this.buildCetusStep(tx, step, senderAddress, slippage, null)
     } else if (step.protocol === 'aftermath') {
       const { tx: updatedTx, coinOutId } = await this.buildAftermathStep(tx, step, senderAddress, slippage, undefined)
       tx = updatedTx
@@ -128,7 +128,7 @@ export class PTBBuilder {
           tx.transferObjects([intermediateCoin], senderAddress)
         }
       } else if (step.protocol === 'cetus') {
-        intermediateCoin = this.buildCetusStep(tx, step, senderAddress, slippage, intermediateCoin)
+        intermediateCoin = await this.buildCetusStep(tx, step, senderAddress, slippage, intermediateCoin)
         if (isLast && intermediateCoin) {
           tx.transferObjects([intermediateCoin], senderAddress)
         } else if (!isLast && !intermediateCoin) {
@@ -176,22 +176,29 @@ export class PTBBuilder {
     return tx
   }
 
-  private buildCetusStep(
+  private async buildCetusStep(
     tx: Transaction,
     step: RouteStep,
     senderAddress: string,
     slippage: number,
     inputCoin: any,
-  ): any {
+  ): Promise<any> {
     const sdk = this.cetusPool.getSdk()
     const sdkOptions = sdk.sdkOptions
     const minOut = applySlippage(step.amountOut, slippage)
 
-    // Match the quote phase: pool's coinTypeA is whichever type is lexicographically lower.
-    // a2b = true means tokenIn is the pool's A coin (lower type), false means tokenIn is B.
-    const a2b = step.tokenIn.type < step.tokenOut.type
-    const coinTypeA = a2b ? step.tokenIn.type : step.tokenOut.type
-    const coinTypeB = a2b ? step.tokenOut.type : step.tokenIn.type
+    // Fetch the actual pool object — its coinTypeA/B are the authoritative
+    // on-chain ordering. Falling back to lexicographic comparison of the
+    // route step's types is wrong when one type is short form (0x2::sui::SUI)
+    // and the other is long form (0xdba3…::usdc::USDC): the comparison
+    // returns the wrong direction and the swap goes backwards.
+    const pool = await this.cetusPool.getPool(step.poolId)
+    if (!pool) {
+      throw new Error(`Cetus pool ${step.poolId} not found on-chain`)
+    }
+    const a2b = coinTypesEqual(pool.coinTypeA, step.tokenIn.type)
+    const coinTypeA = pool.coinTypeA
+    const coinTypeB = pool.coinTypeB
 
     const params = {
       pool_id: step.poolId,

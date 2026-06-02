@@ -4,6 +4,17 @@ import { DeepBookClient } from "@mysten/deepbook-v3";
 import { testnetCoins, testnetPools, mainnetCoins, mainnetPools } from "@mysten/deepbook-v3";
 
 // src/utils/tokens.ts
+import { normalizeStructTag } from "@mysten/sui/utils";
+function normalizeCoinType(type) {
+  try {
+    return normalizeStructTag(type);
+  } catch {
+    return type;
+  }
+}
+function coinTypesEqual(a, b) {
+  return normalizeCoinType(a) === normalizeCoinType(b);
+}
 var TESTNET_TOKENS = {
   SUI: {
     address: "0x0000000000000000000000000000000000000000000000000000000000000002",
@@ -280,23 +291,53 @@ var DeepBookPool = class {
 
 // src/pools/cetus.ts
 import { initCetusSDK } from "@cetusprotocol/cetus-sui-clmm-sdk";
+var KNOWN_MAINNET_POOLS = [
+  // SUI/USDC — verified high-liquidity pool (TVL ~$15M+).
+  "0xb8d7d9e66a60c239e7a60110efcf8de6c705580ed924d0dde141f4a0e2c90105"
+];
 var CetusPool = class {
+  constructor(network, senderAddress) {
+    this.network = network;
+    this.sdk = initCetusSDK({
+      network,
+      wallet: senderAddress ?? "0x0000000000000000000000000000000000000000000000000000000000000001"
+    });
+    this.knownPoolIds = network === "mainnet" ? [...KNOWN_MAINNET_POOLS] : [];
+  }
+  network;
   sdk;
   poolCache = /* @__PURE__ */ new Map();
   cacheExpiry = /* @__PURE__ */ new Map();
   CACHE_TTL = 3e4;
   // 30 seconds
-  constructor(network, senderAddress) {
-    this.sdk = initCetusSDK({
-      network,
-      wallet: senderAddress ?? "0x0000000000000000000000000000000000000000000000000000000000000001"
-    });
-  }
+  knownPoolIds;
+  /** Cache the resolved Pool object for each known pool ID so we don't re-fetch every time. */
+  knownPoolObjects = /* @__PURE__ */ new Map();
   updateSender(address) {
     this.sdk.senderAddress = address;
   }
+  /** Add a known Cetus pool ID for on-chain fallback discovery. */
+  registerKnownPool(poolId) {
+    if (!this.knownPoolIds.includes(poolId)) this.knownPoolIds.push(poolId);
+  }
   cacheKey(typeA, typeB) {
-    return [typeA, typeB].sort().join("|");
+    return [normalizeCoinType(typeA), normalizeCoinType(typeB)].sort().join("|");
+  }
+  /** Fetch a known pool object once, cache it for the lifetime of the CetusPool instance. */
+  async getKnownPool(poolId) {
+    if (this.knownPoolObjects.has(poolId)) return this.knownPoolObjects.get(poolId);
+    try {
+      const pool = await Promise.race([
+        this.sdk.Pool.getPool(poolId, true),
+        new Promise(
+          (_, reject) => setTimeout(() => reject(new Error("Cetus getPool timeout")), 4e3)
+        )
+      ]);
+      if (pool) this.knownPoolObjects.set(poolId, pool);
+      return pool ?? null;
+    } catch {
+      return null;
+    }
   }
   async getPoolsForPair(tokenIn, tokenOut) {
     const key = this.cacheKey(tokenIn.type, tokenOut.type);
@@ -304,20 +345,29 @@ var CetusPool = class {
     if (Date.now() < expiry && this.poolCache.has(key)) {
       return this.poolCache.get(key);
     }
+    let pools = [];
     try {
-      const pools = await Promise.race([
+      pools = await Promise.race([
         this.sdk.Pool.getPoolByCoins([tokenIn.type, tokenOut.type]),
         new Promise(
           (_, reject) => setTimeout(() => reject(new Error("Cetus pool fetch timeout")), 4e3)
         )
       ]);
-      const active = pools.filter((p) => !p.is_pause && p.liquidity > 0);
-      this.poolCache.set(key, active);
-      this.cacheExpiry.set(key, Date.now() + this.CACHE_TTL);
-      return active;
     } catch {
-      return [];
+      pools = [];
     }
+    if (pools.length === 0 && this.knownPoolIds.length > 0) {
+      const candidates = await Promise.all(
+        this.knownPoolIds.map((id) => this.getKnownPool(id))
+      );
+      pools = candidates.filter((p) => p !== null).filter(
+        (p) => coinTypesEqual(p.coinTypeA, tokenIn.type) && coinTypesEqual(p.coinTypeB, tokenOut.type) || coinTypesEqual(p.coinTypeA, tokenOut.type) && coinTypesEqual(p.coinTypeB, tokenIn.type)
+      );
+    }
+    const active = pools.filter((p) => !p.is_pause && p.liquidity > 0);
+    this.poolCache.set(key, active);
+    this.cacheExpiry.set(key, Date.now() + this.CACHE_TTL);
+    return active;
   }
   async getQuote(tokenIn, tokenOut, amountIn) {
     try {
@@ -338,7 +388,7 @@ var CetusPool = class {
   }
   async quoteFromPool(pool, tokenIn, tokenOut, amountIn) {
     try {
-      const a2b = pool.coinTypeA === tokenIn.type;
+      const a2b = coinTypesEqual(pool.coinTypeA, tokenIn.type);
       const decimalsA = a2b ? tokenIn.decimals : tokenOut.decimals;
       const decimalsB = a2b ? tokenOut.decimals : tokenIn.decimals;
       const result = await this.sdk.Swap.preswap({
@@ -375,6 +425,15 @@ var CetusPool = class {
   }
   getSdk() {
     return this.sdk;
+  }
+  /**
+   * Fetch a Cetus pool object directly from chain by ID. Used by the PTB
+   * builder to read the authoritative `coinTypeA`/`coinTypeB` ordering
+   * (which determines the `a2b` swap direction). Cached for the lifetime
+   * of this CetusPool instance.
+   */
+  async getPool(poolId) {
+    return this.getKnownPool(poolId);
   }
   async getPoolForPair(tokenIn, tokenOut) {
     const pools = await this.getPoolsForPair(tokenIn, tokenOut);
@@ -886,7 +945,7 @@ var SevenKProtocolPool = class {
 function safe(p) {
   return p.catch(() => null);
 }
-var UNBUILDABLE_PROTOCOLS = ["turbos", "flowx", "hop"];
+var UNBUILDABLE_PROTOCOLS = ["turbos", "flowx", "hop", "cetus"];
 var PoolAggregator = class {
   constructor(deepbook, cetus, aftermath, turbos, hop, sevenkprotocol, flowx) {
     this.deepbook = deepbook;
@@ -1058,7 +1117,7 @@ var PTBBuilder = class {
       const outCoin = isBaseToCoin ? quoteCoin : baseCoin;
       tx.transferObjects([outCoin], senderAddress);
     } else if (step.protocol === "cetus") {
-      this.buildCetusStep(tx, step, senderAddress, slippage, null);
+      await this.buildCetusStep(tx, step, senderAddress, slippage, null);
     } else if (step.protocol === "aftermath") {
       const { tx: updatedTx, coinOutId } = await this.buildAftermathStep(tx, step, senderAddress, slippage, void 0);
       tx = updatedTx;
@@ -1100,7 +1159,7 @@ var PTBBuilder = class {
           tx.transferObjects([intermediateCoin], senderAddress);
         }
       } else if (step.protocol === "cetus") {
-        intermediateCoin = this.buildCetusStep(tx, step, senderAddress, slippage, intermediateCoin);
+        intermediateCoin = await this.buildCetusStep(tx, step, senderAddress, slippage, intermediateCoin);
         if (isLast && intermediateCoin) {
           tx.transferObjects([intermediateCoin], senderAddress);
         } else if (!isLast && !intermediateCoin) {
@@ -1144,13 +1203,17 @@ var PTBBuilder = class {
     }
     return tx;
   }
-  buildCetusStep(tx, step, senderAddress, slippage, inputCoin) {
+  async buildCetusStep(tx, step, senderAddress, slippage, inputCoin) {
     const sdk = this.cetusPool.getSdk();
     const sdkOptions = sdk.sdkOptions;
     const minOut = applySlippage(step.amountOut, slippage);
-    const a2b = step.tokenIn.type < step.tokenOut.type;
-    const coinTypeA = a2b ? step.tokenIn.type : step.tokenOut.type;
-    const coinTypeB = a2b ? step.tokenOut.type : step.tokenIn.type;
+    const pool = await this.cetusPool.getPool(step.poolId);
+    if (!pool) {
+      throw new Error(`Cetus pool ${step.poolId} not found on-chain`);
+    }
+    const a2b = coinTypesEqual(pool.coinTypeA, step.tokenIn.type);
+    const coinTypeA = pool.coinTypeA;
+    const coinTypeB = pool.coinTypeB;
     const params = {
       pool_id: step.poolId,
       a2b,
