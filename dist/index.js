@@ -1,6 +1,3 @@
-// src/index.ts
-import { Transaction as Transaction2 } from "@mysten/sui/transactions";
-
 // src/pools/deepbook.ts
 import { SuiJsonRpcClient as SuiClient, getJsonRpcFullnodeUrl as getFullnodeUrl } from "@mysten/sui/jsonRpc";
 import { DeepBookClient } from "@mysten/deepbook-v3";
@@ -1311,11 +1308,10 @@ var Routex = class {
     }
     let ptb;
     let gasEstimate;
+    ptb = await this.ptbBuilder.buildFromRoute(route, senderAddress, slippage);
     try {
-      ptb = await this.ptbBuilder.buildFromRoute(route, senderAddress, slippage);
       gasEstimate = await this.ptbBuilder.estimateGas(ptb, senderAddress);
     } catch {
-      ptb = new Transaction2();
       gasEstimate = BigInt(5e6);
     }
     return {

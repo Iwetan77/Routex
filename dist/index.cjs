@@ -36,7 +36,6 @@ __export(index_exports, {
   resolveToken: () => resolveToken
 });
 module.exports = __toCommonJS(index_exports);
-var import_transactions3 = require("@mysten/sui/transactions");
 
 // src/pools/deepbook.ts
 var import_jsonRpc = require("@mysten/sui/jsonRpc");
@@ -1348,11 +1347,10 @@ var Routex = class {
     }
     let ptb;
     let gasEstimate;
+    ptb = await this.ptbBuilder.buildFromRoute(route, senderAddress, slippage);
     try {
-      ptb = await this.ptbBuilder.buildFromRoute(route, senderAddress, slippage);
       gasEstimate = await this.ptbBuilder.estimateGas(ptb, senderAddress);
     } catch {
-      ptb = new import_transactions3.Transaction();
       gasEstimate = BigInt(5e6);
     }
     return {
