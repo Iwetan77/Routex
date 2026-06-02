@@ -66,8 +66,16 @@ export class Routex {
     const tokenOut = resolveToken(params.to)
     const amountIn = BigInt(params.amount)
     const slippage = params.slippageTolerance ?? 0.005
-    const senderAddress = params.senderAddress
-      ?? '0x0000000000000000000000000000000000000000000000000000000000000001'
+
+    // Whether we have a real sender or a placeholder. Some DEX SDKs (7K, Aftermath)
+    // refuse to build PTBs against the simulation address `0x0...01` because they
+    // validate signer / coin balances on-chain. In that case we still return a
+    // valid quote (amountOut, route, fees) but ptb is a placeholder — execute()
+    // rebuilds it with the real signer, so callers that pre-sign or inspect the
+    // PTB MUST pass `senderAddress` to getQuote().
+    const SIMULATION_ADDRESS = '0x0000000000000000000000000000000000000000000000000000000000000001'
+    const hasRealSender = !!params.senderAddress
+    const senderAddress = params.senderAddress ?? SIMULATION_ADDRESS
 
     const route = await this.pathfinder.findBestRoute(
       tokenIn,
@@ -81,13 +89,31 @@ export class Routex {
       throw new Error(`No route found from ${params.from} to ${params.to}`)
     }
 
-    // Build PTB with the real (or simulation) sender. Gas estimation is informational
-    // and allowed to fall back — but buildFromRoute must succeed or we surface the error.
-    // execute() always rebuilds the PTB with the real signer, so the quote's ptb is only
-    // used for callers that want to inspect or pre-sign it.
+    // Build PTB. With a real sender, any build failure is a hard error — surface it.
+    // With the simulation address, build is best-effort: if the DEX SDK rejects the
+    // placeholder sender (7K, Aftermath, etc.), return an unbuildable-PTB marker
+    // instead of throwing so the caller can still see the quote's amountOut, route,
+    // and fees. execute() always rebuilds with the real signer anyway.
     let ptb: Transaction
     let gasEstimate: bigint
-    ptb = await this.ptbBuilder.buildFromRoute(route, senderAddress, slippage)
+    try {
+      ptb = await this.ptbBuilder.buildFromRoute(route, senderAddress, slippage)
+    } catch (err) {
+      if (hasRealSender) {
+        throw new Error(
+          `Route found (${params.from}->${params.to} via ${route.steps.map(s => s.protocol).join('->')}) ` +
+          `but PTB construction failed: ${err instanceof Error ? err.message : String(err)}`,
+        )
+      }
+      // Simulation-address build failure: return a marked placeholder PTB. The
+      // failure is expected for DEX SDKs that validate signer (7K, Aftermath, etc.).
+      // Callers that need to inspect or pre-sign the PTB must pass senderAddress.
+      ptb = new Transaction()
+      ;(ptb as any).__routexPlaceholder = {
+        reason: 'PTB build skipped: no senderAddress provided. Pass senderAddress to getQuote() to build a real PTB, or call routex.execute() with a signer.',
+        underlyingError: err instanceof Error ? err.message : String(err),
+      }
+    }
     try {
       gasEstimate = await this.ptbBuilder.estimateGas(ptb, senderAddress)
     } catch {

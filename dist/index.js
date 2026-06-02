@@ -1,3 +1,6 @@
+// src/index.ts
+import { Transaction as Transaction2 } from "@mysten/sui/transactions";
+
 // src/pools/deepbook.ts
 import { SuiJsonRpcClient as SuiClient, getJsonRpcFullnodeUrl as getFullnodeUrl } from "@mysten/sui/jsonRpc";
 import { DeepBookClient } from "@mysten/deepbook-v3";
@@ -1412,7 +1415,9 @@ var Routex = class {
     const tokenOut = resolveToken(params.to);
     const amountIn = BigInt(params.amount);
     const slippage = params.slippageTolerance ?? 5e-3;
-    const senderAddress = params.senderAddress ?? "0x0000000000000000000000000000000000000000000000000000000000000001";
+    const SIMULATION_ADDRESS2 = "0x0000000000000000000000000000000000000000000000000000000000000001";
+    const hasRealSender = !!params.senderAddress;
+    const senderAddress = params.senderAddress ?? SIMULATION_ADDRESS2;
     const route = await this.pathfinder.findBestRoute(
       tokenIn,
       tokenOut,
@@ -1425,7 +1430,20 @@ var Routex = class {
     }
     let ptb;
     let gasEstimate;
-    ptb = await this.ptbBuilder.buildFromRoute(route, senderAddress, slippage);
+    try {
+      ptb = await this.ptbBuilder.buildFromRoute(route, senderAddress, slippage);
+    } catch (err) {
+      if (hasRealSender) {
+        throw new Error(
+          `Route found (${params.from}->${params.to} via ${route.steps.map((s) => s.protocol).join("->")}) but PTB construction failed: ${err instanceof Error ? err.message : String(err)}`
+        );
+      }
+      ptb = new Transaction2();
+      ptb.__routexPlaceholder = {
+        reason: "PTB build skipped: no senderAddress provided. Pass senderAddress to getQuote() to build a real PTB, or call routex.execute() with a signer.",
+        underlyingError: err instanceof Error ? err.message : String(err)
+      };
+    }
     try {
       gasEstimate = await this.ptbBuilder.estimateGas(ptb, senderAddress);
     } catch {
