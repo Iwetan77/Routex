@@ -148,11 +148,13 @@ export class PTBBuilder {
   ): any {
     const sdk = this.cetusPool.getSdk()
     const sdkOptions = sdk.sdkOptions
-    const a2b = true // determined by token order in pool
     const minOut = applySlippage(step.amountOut, slippage)
 
-    const coinTypeA = step.tokenIn.type
-    const coinTypeB = step.tokenOut.type
+    // Match the quote phase: pool's coinTypeA is whichever type is lexicographically lower.
+    // a2b = true means tokenIn is the pool's A coin (lower type), false means tokenIn is B.
+    const a2b = step.tokenIn.type < step.tokenOut.type
+    const coinTypeA = a2b ? step.tokenIn.type : step.tokenOut.type
+    const coinTypeB = a2b ? step.tokenOut.type : step.tokenIn.type
 
     const params = {
       pool_id: step.poolId,
@@ -173,7 +175,7 @@ export class PTBBuilder {
         tragetCoinAmount: step.amountIn.toString(),
       }
       const zeroCoinInput = {
-        targetCoin: TransactionUtil.buildCoinWithBalance(0n, coinTypeB),
+        targetCoin: TransactionUtil.buildCoinWithBalance(0n, step.tokenOut.type),
         remainCoins: [],
         isMintZeroCoin: true,
         tragetCoinAmount: '0',
@@ -188,18 +190,19 @@ export class PTBBuilder {
         zeroCoinInput,
       )
 
-      // txRes[0] = coinA remaining, txRes[1] = coinB output
-      return txRes[1]
+      // a2b: txRes[0]=coinA remaining, txRes[1]=coinB out
+      // b2a: txRes[0]=coinA out, txRes[1]=coinB remaining
+      return a2b ? txRes[1] : txRes[0]
     } else {
-      // Single-step Cetus swap: let the SDK handle coin fetching via coinWithBalance
+      // Single-step: SDK fetches coins from wallet via coinWithBalance
       const coinInput = {
-        targetCoin: TransactionUtil.buildCoinWithBalance(step.amountIn, coinTypeA),
+        targetCoin: TransactionUtil.buildCoinWithBalance(step.amountIn, step.tokenIn.type),
         remainCoins: [],
         isMintZeroCoin: false,
         tragetCoinAmount: step.amountIn.toString(),
       }
       const zeroCoinInput = {
-        targetCoin: TransactionUtil.buildCoinWithBalance(0n, coinTypeB),
+        targetCoin: TransactionUtil.buildCoinWithBalance(0n, step.tokenOut.type),
         remainCoins: [],
         isMintZeroCoin: true,
         tragetCoinAmount: '0',
@@ -214,7 +217,8 @@ export class PTBBuilder {
         zeroCoinInput,
       )
 
-      const outCoin = txRes[1] // coinB is always the output for a2b
+      // Pick the output coin based on swap direction
+      const outCoin = a2b ? txRes[1] : txRes[0]
       tx.transferObjects([outCoin], senderAddress)
       return outCoin
     }

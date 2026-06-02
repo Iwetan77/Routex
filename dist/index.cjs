@@ -1153,10 +1153,10 @@ var PTBBuilder = class {
   buildCetusStep(tx, step, senderAddress, slippage, inputCoin) {
     const sdk = this.cetusPool.getSdk();
     const sdkOptions = sdk.sdkOptions;
-    const a2b = true;
     const minOut = applySlippage(step.amountOut, slippage);
-    const coinTypeA = step.tokenIn.type;
-    const coinTypeB = step.tokenOut.type;
+    const a2b = step.tokenIn.type < step.tokenOut.type;
+    const coinTypeA = a2b ? step.tokenIn.type : step.tokenOut.type;
+    const coinTypeB = a2b ? step.tokenOut.type : step.tokenIn.type;
     const params = {
       pool_id: step.poolId,
       a2b,
@@ -1174,7 +1174,7 @@ var PTBBuilder = class {
         tragetCoinAmount: step.amountIn.toString()
       };
       const zeroCoinInput = {
-        targetCoin: import_cetus_sui_clmm_sdk2.TransactionUtil.buildCoinWithBalance(0n, coinTypeB),
+        targetCoin: import_cetus_sui_clmm_sdk2.TransactionUtil.buildCoinWithBalance(0n, step.tokenOut.type),
         remainCoins: [],
         isMintZeroCoin: true,
         tragetCoinAmount: "0"
@@ -1187,16 +1187,16 @@ var PTBBuilder = class {
         primaryCoinInput,
         zeroCoinInput
       );
-      return txRes[1];
+      return a2b ? txRes[1] : txRes[0];
     } else {
       const coinInput = {
-        targetCoin: import_cetus_sui_clmm_sdk2.TransactionUtil.buildCoinWithBalance(step.amountIn, coinTypeA),
+        targetCoin: import_cetus_sui_clmm_sdk2.TransactionUtil.buildCoinWithBalance(step.amountIn, step.tokenIn.type),
         remainCoins: [],
         isMintZeroCoin: false,
         tragetCoinAmount: step.amountIn.toString()
       };
       const zeroCoinInput = {
-        targetCoin: import_cetus_sui_clmm_sdk2.TransactionUtil.buildCoinWithBalance(0n, coinTypeB),
+        targetCoin: import_cetus_sui_clmm_sdk2.TransactionUtil.buildCoinWithBalance(0n, step.tokenOut.type),
         remainCoins: [],
         isMintZeroCoin: true,
         tragetCoinAmount: "0"
@@ -1209,7 +1209,7 @@ var PTBBuilder = class {
         coinInput,
         zeroCoinInput
       );
-      const outCoin = txRes[1];
+      const outCoin = a2b ? txRes[1] : txRes[0];
       tx.transferObjects([outCoin], senderAddress);
       return outCoin;
     }
