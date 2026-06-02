@@ -24,6 +24,17 @@ function safe(p: Promise<RouteStep | null>): Promise<RouteStep | null> {
   return p.catch(() => null)
 }
 
+/**
+ * Protocols that are NOT YET wired into the PTB builder. Their SDKs return
+ * standalone Transaction objects that can't be composed into our PTB chain
+ * without a deeper SDK integration, so quoting through them would produce a
+ * route the caller can't execute. They're always force-excluded from quoting
+ * until proper PTB builders land. To opt in (e.g. for off-chain analytics),
+ * call `getAllQuotes(..., excludeProtocols)` directly on the aggregator with
+ * the unsupported ones left out — but do NOT execute the resulting route.
+ */
+const UNBUILDABLE_PROTOCOLS = ['turbos', 'flowx', 'hop'] as const
+
 export class PoolAggregator {
   constructor(
     private deepbook: DeepBookPool,
@@ -53,6 +64,11 @@ export class PoolAggregator {
     amountIn: bigint,
     excludeProtocols: string[] = [],
   ): Promise<RouteStep[]> {
+    // Always exclude protocols that don't have a working PTB builder yet —
+    // even if the caller didn't ask. Otherwise the pathfinder could pick a
+    // route that buildFromRoute() can't construct.
+    const exclude = Array.from(new Set([...excludeProtocols, ...UNBUILDABLE_PROTOCOLS]))
+    excludeProtocols = exclude
     const queries: Promise<RouteStep | null>[] = []
 
     // ─── Tier 1 — Primary liquidity sources (audited, established) ───────────

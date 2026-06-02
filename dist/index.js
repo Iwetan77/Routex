@@ -856,13 +856,13 @@ var SevenKProtocolPool = class {
     if (!entry || Date.now() > entry.expiry) return null;
     return entry.metaQuote;
   }
-  async addSwapToTransaction(tx, tokenIn, tokenOut, amountIn, senderAddress, slippageBps = 100) {
+  async addSwapToTransaction(tx, tokenIn, tokenOut, amountIn, senderAddress, slippageBps = 100, coinInOverride) {
     const metaAg = await this.getMetaAg();
     const cachedQuote = this.getCachedQuote(tokenIn, tokenOut, amountIn);
     if (!cachedQuote) {
       throw new Error("7K quote cache miss \u2014 call getQuote first.");
     }
-    const coinIn = coinWithBalance({
+    const coinIn = coinInOverride ?? coinWithBalance({
       balance: amountIn,
       type: tokenIn.type
     });
@@ -886,6 +886,7 @@ var SevenKProtocolPool = class {
 function safe(p) {
   return p.catch(() => null);
 }
+var UNBUILDABLE_PROTOCOLS = ["turbos", "flowx", "hop"];
 var PoolAggregator = class {
   constructor(deepbook, cetus, aftermath, turbos, hop, sevenkprotocol, flowx) {
     this.deepbook = deepbook;
@@ -908,6 +909,8 @@ var PoolAggregator = class {
     return quotes[0] ?? null;
   }
   async getAllQuotes(tokenIn, tokenOut, amountIn, excludeProtocols = []) {
+    const exclude = Array.from(/* @__PURE__ */ new Set([...excludeProtocols, ...UNBUILDABLE_PROTOCOLS]));
+    excludeProtocols = exclude;
     const queries = [];
     if (!excludeProtocols.includes("deepbook")) {
       queries.push(safe(this.deepbook.getQuote(tokenIn, tokenOut, amountIn)));
@@ -1009,18 +1012,21 @@ function applySlippage(amount, slippage) {
 }
 
 // src/ptb/builder.ts
+var BUILDABLE_PROTOCOLS = ["deepbook", "cetus", "aftermath", "sevenkprotocol"];
 var PTBBuilder = class {
-  constructor(network, deepbookPool, cetusPool, aftermathPool) {
+  constructor(network, deepbookPool, cetusPool, aftermathPool, sevenkPool) {
     this.network = network;
     this.deepbookPool = deepbookPool;
     this.cetusPool = cetusPool;
     this.aftermathPool = aftermathPool;
+    this.sevenkPool = sevenkPool;
     this.suiClient = new SuiClient2({ url: getFullnodeUrl2(network) });
   }
   network;
   deepbookPool;
   cetusPool;
   aftermathPool;
+  sevenkPool;
   suiClient;
   async buildFromRoute(route, senderAddress, slippageTolerance) {
     let tx = new Transaction();
@@ -1057,6 +1063,14 @@ var PTBBuilder = class {
       const { tx: updatedTx, coinOutId } = await this.buildAftermathStep(tx, step, senderAddress, slippage, void 0);
       tx = updatedTx;
       if (coinOutId) tx.transferObjects([coinOutId], senderAddress);
+    } else if (step.protocol === "sevenkprotocol") {
+      const { tx: updatedTx, coinOutId } = await this.buildSevenKStep(tx, step, senderAddress, slippage, void 0);
+      tx = updatedTx;
+      if (coinOutId) tx.transferObjects([coinOutId], senderAddress);
+    } else {
+      throw new Error(
+        `PTB builder does not support protocol "${step.protocol}". Buildable: ${BUILDABLE_PROTOCOLS.join(", ")}. Exclude unsupported protocols via getQuote({ excludeProtocols: [...] }) or upgrade routex-sui.`
+      );
     }
     return tx;
   }
@@ -1107,6 +1121,25 @@ var PTBBuilder = class {
         } else if (!isLast && !intermediateCoin) {
           throw new Error(`Aftermath step ${i} produced no output coin for chaining`);
         }
+      } else if (step.protocol === "sevenkprotocol") {
+        const { tx: updatedTx, coinOutId } = await this.buildSevenKStep(
+          tx,
+          step,
+          senderAddress,
+          slippage,
+          intermediateCoin ?? void 0
+        );
+        tx = updatedTx;
+        intermediateCoin = coinOutId;
+        if (isLast && intermediateCoin) {
+          tx.transferObjects([intermediateCoin], senderAddress);
+        } else if (!isLast && !intermediateCoin) {
+          throw new Error(`7K step ${i} produced no output coin for chaining`);
+        }
+      } else {
+        throw new Error(
+          `PTB builder does not support protocol "${step.protocol}" at step ${i}. Buildable: ${BUILDABLE_PROTOCOLS.join(", ")}. Exclude unsupported protocols via getQuote({ excludeProtocols: [...] }).`
+        );
       }
     }
     return tx;
@@ -1186,6 +1219,21 @@ var PTBBuilder = class {
       );
     }
     return this.aftermathPool.addSwapToTransaction(tx, route, slippage, senderAddress, coinInId);
+  }
+  async buildSevenKStep(tx, step, senderAddress, slippage, coinInId) {
+    if (!this.sevenkPool) {
+      throw new Error("SevenKProtocolPool not configured on PTBBuilder");
+    }
+    const slippageBps = Math.max(1, Math.floor(slippage * 1e4));
+    return this.sevenkPool.addSwapToTransaction(
+      tx,
+      step.tokenIn,
+      step.tokenOut,
+      step.amountIn,
+      senderAddress,
+      slippageBps,
+      coinInId
+    );
   }
   applySlippage(amount, slippage) {
     return applySlippage(amount, slippage);
@@ -1284,7 +1332,13 @@ var Routex = class {
       this.flowxPool
     );
     this.pathfinder = new Pathfinder(this.aggregator);
-    this.ptbBuilder = new PTBBuilder(network, this.deepbookPool, this.cetusPool, this.aftermathPool);
+    this.ptbBuilder = new PTBBuilder(
+      network,
+      this.deepbookPool,
+      this.cetusPool,
+      this.aftermathPool,
+      this.sevenkPool
+    );
     this.executor = new PTBExecutor(network);
   }
   setSenderAddress(address) {

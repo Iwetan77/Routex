@@ -4,9 +4,14 @@ import { TransactionUtil, type CetusClmmSDK } from '@cetusprotocol/cetus-sui-clm
 import type { DeepBookPool } from '../pools/deepbook.js'
 import type { CetusPool } from '../pools/cetus.js'
 import type { AftermathPool } from '../pools/aftermath.js'
+import type { SevenKProtocolPool } from '../pools/sevenkprotocol.js'
 import type { Route, RouteStep } from '../types.js'
 import { applySlippage } from '../utils/math.js'
 import { fromBaseUnits } from '../utils/tokens.js'
+
+/** Protocols the PTB builder can actually emit transaction calls for. */
+export const BUILDABLE_PROTOCOLS = ['deepbook', 'cetus', 'aftermath', 'sevenkprotocol'] as const
+type BuildableProtocol = (typeof BUILDABLE_PROTOCOLS)[number]
 
 export class PTBBuilder {
   private suiClient: SuiClient
@@ -16,6 +21,7 @@ export class PTBBuilder {
     private deepbookPool: DeepBookPool,
     private cetusPool: CetusPool,
     private aftermathPool?: AftermathPool,
+    private sevenkPool?: SevenKProtocolPool,
   ) {
     this.suiClient = new SuiClient({ url: getFullnodeUrl(network) })
   }
@@ -71,6 +77,16 @@ export class PTBBuilder {
       const { tx: updatedTx, coinOutId } = await this.buildAftermathStep(tx, step, senderAddress, slippage, undefined)
       tx = updatedTx
       if (coinOutId) tx.transferObjects([coinOutId], senderAddress)
+    } else if (step.protocol === 'sevenkprotocol') {
+      const { tx: updatedTx, coinOutId } = await this.buildSevenKStep(tx, step, senderAddress, slippage, undefined)
+      tx = updatedTx
+      if (coinOutId) tx.transferObjects([coinOutId], senderAddress)
+    } else {
+      throw new Error(
+        `PTB builder does not support protocol "${step.protocol}". ` +
+        `Buildable: ${BUILDABLE_PROTOCOLS.join(', ')}. ` +
+        `Exclude unsupported protocols via getQuote({ excludeProtocols: [...] }) or upgrade routex-sui.`,
+      )
     }
 
     return tx
@@ -133,6 +149,27 @@ export class PTBBuilder {
         } else if (!isLast && !intermediateCoin) {
           throw new Error(`Aftermath step ${i} produced no output coin for chaining`)
         }
+      } else if (step.protocol === 'sevenkprotocol') {
+        const { tx: updatedTx, coinOutId } = await this.buildSevenKStep(
+          tx,
+          step,
+          senderAddress,
+          slippage,
+          intermediateCoin ?? undefined,
+        )
+        tx = updatedTx
+        intermediateCoin = coinOutId
+        if (isLast && intermediateCoin) {
+          tx.transferObjects([intermediateCoin], senderAddress)
+        } else if (!isLast && !intermediateCoin) {
+          throw new Error(`7K step ${i} produced no output coin for chaining`)
+        }
+      } else {
+        throw new Error(
+          `PTB builder does not support protocol "${step.protocol}" at step ${i}. ` +
+          `Buildable: ${BUILDABLE_PROTOCOLS.join(', ')}. ` +
+          `Exclude unsupported protocols via getQuote({ excludeProtocols: [...] }).`,
+        )
       }
     }
 
@@ -244,6 +281,29 @@ export class PTBBuilder {
 
     // Aftermath returns a NEW Transaction — must use it going forward
     return this.aftermathPool.addSwapToTransaction(tx, route, slippage, senderAddress, coinInId)
+  }
+
+  private async buildSevenKStep(
+    tx: Transaction,
+    step: RouteStep,
+    senderAddress: string,
+    slippage: number,
+    coinInId: any | undefined,
+  ): Promise<{ tx: Transaction; coinOutId: any }> {
+    if (!this.sevenkPool) {
+      throw new Error('SevenKProtocolPool not configured on PTBBuilder')
+    }
+    // 7K SDK takes slippage in bps (1 bps = 0.01%). Floor to 1 bps min so 0 never disables protection.
+    const slippageBps = Math.max(1, Math.floor(slippage * 10_000))
+    return this.sevenkPool.addSwapToTransaction(
+      tx,
+      step.tokenIn,
+      step.tokenOut,
+      step.amountIn,
+      senderAddress,
+      slippageBps,
+      coinInId,
+    )
   }
 
   applySlippage(amount: bigint, slippage: number): bigint {

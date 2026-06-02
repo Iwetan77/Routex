@@ -47,7 +47,13 @@ export class Routex {
       this.flowxPool,
     )
     this.pathfinder = new Pathfinder(this.aggregator)
-    this.ptbBuilder = new PTBBuilder(network, this.deepbookPool, this.cetusPool, this.aftermathPool)
+    this.ptbBuilder = new PTBBuilder(
+      network,
+      this.deepbookPool,
+      this.cetusPool,
+      this.aftermathPool,
+      this.sevenkPool,
+    )
     this.executor = new PTBExecutor(network)
   }
 

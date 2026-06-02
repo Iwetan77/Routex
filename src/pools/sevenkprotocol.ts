@@ -95,6 +95,8 @@ export class SevenKProtocolPool {
     amountIn: bigint,
     senderAddress: string,
     slippageBps: number = 100,
+    /** Optional intermediate coin from a previous hop. If omitted, a new coin is sourced from the wallet. */
+    coinInOverride?: any,
   ): Promise<{ tx: Transaction; coinOutId: any }> {
     const metaAg = await this.getMetaAg()
     const cachedQuote = this.getCachedQuote(tokenIn, tokenOut, amountIn)
@@ -102,10 +104,10 @@ export class SevenKProtocolPool {
       throw new Error('7K quote cache miss — call getQuote first.')
     }
 
-    const coinIn = coinWithBalance({
+    const coinIn = coinInOverride ?? (coinWithBalance({
       balance: amountIn,
       type: tokenIn.type,
-    }) as any
+    }) as any)
 
     const coinOut = await metaAg.swap(
       {
