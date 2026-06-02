@@ -75,17 +75,16 @@ export class Routex {
       throw new Error(`No route found from ${params.from} to ${params.to}`)
     }
 
-    // Build PTB for gas estimation. Aftermath's PTB builder validates the sender's
-    // on-chain coin balance, which can fail when using the simulation address.
-    // If building fails we fall back to a stub — execute() always rebuilds with the
-    // real signer address, so the stub PTB is never used for actual execution.
+    // Build PTB with the real (or simulation) sender. Gas estimation is informational
+    // and allowed to fall back — but buildFromRoute must succeed or we surface the error.
+    // execute() always rebuilds the PTB with the real signer, so the quote's ptb is only
+    // used for callers that want to inspect or pre-sign it.
     let ptb: Transaction
     let gasEstimate: bigint
+    ptb = await this.ptbBuilder.buildFromRoute(route, senderAddress, slippage)
     try {
-      ptb = await this.ptbBuilder.buildFromRoute(route, senderAddress, slippage)
       gasEstimate = await this.ptbBuilder.estimateGas(ptb, senderAddress)
     } catch {
-      ptb = new Transaction()
       gasEstimate = BigInt(5_000_000)  // 0.005 SUI fallback
     }
 
