@@ -21,15 +21,33 @@ export class Pathfinder {
     maxHops: number = 3,
     excludeProtocols: string[] = [],
   ): Promise<Route | null> {
+    // First attempt — most calls succeed here.
+    let result = await this.findBestRouteOnce(tokenIn, tokenOut, amountIn, maxHops, excludeProtocols)
+    if (result) return result
+
+    // Cold-start retry: the very first call after a Routex instance is created
+    // can return null even for highly liquid pairs because DEX SDKs (7K, Aftermath,
+    // Cetus) all initialize on demand and their inner provider races miss the
+    // 5–6 s deadline. By the time control returns here the SDKs are warm, so a
+    // single retry with the now-cached state usually succeeds. This is a one-shot
+    // tax — once any quote has succeeded, every subsequent call hits the fast
+    // path immediately.
+    result = await this.findBestRouteOnce(tokenIn, tokenOut, amountIn, maxHops, excludeProtocols)
+    return result
+  }
+
+  private async findBestRouteOnce(
+    tokenIn: Token,
+    tokenOut: Token,
+    amountIn: bigint,
+    maxHops: number,
+    excludeProtocols: string[],
+  ): Promise<Route | null> {
     const bridgeSymbols = maxHops >= 2
       ? BRIDGE_TOKENS.filter(sym => sym !== tokenIn.symbol && sym !== tokenOut.symbol)
       : []
 
     // Run direct quote and all bridge-hop attempts concurrently.
-    // Previously the direct quote ran first (sequential) then hops ran in
-    // parallel — 5 s direct + 10 s per hop = 15 s worst case, blowing past
-    // the 12 s outer deadline. Running everything in parallel cuts that to
-    // max(5 s direct, 8 s hop) = 8 s worst case.
     const [directStep, ...hopRoutes] = await Promise.all([
       this.aggregator.getBestQuote(tokenIn, tokenOut, amountIn, excludeProtocols),
       ...bridgeSymbols.map(sym =>

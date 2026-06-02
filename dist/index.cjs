@@ -912,6 +912,12 @@ var SevenKProtocolPool = class {
     }
     return this.metaAgPromise;
   }
+  /** Tracks whether this instance has ever had a successful quote — used to extend
+   * the timeout for cold starts. The 7K SDK internally races multiple providers
+   * (bluefin7k, cetus, flowx, okx); the first invocation has to spin all of them
+   * up cold, which often blows past a 5s window. After the first success the
+   * SDK's internal state is warm and 2-3s is plenty. */
+  warmedUp = false;
   async getQuote(tokenIn, tokenOut, amountIn) {
     try {
       const metaAg = await this.getMetaAg();
@@ -919,7 +925,9 @@ var SevenKProtocolPool = class {
         coinTypeIn: tokenIn.type,
         coinTypeOut: tokenOut.type,
         amountIn: amountIn.toString(),
-        timeout: 5e3
+        // Cold start: 12s (gives the slowest provider room to respond at least once).
+        // Warm: 5s (snappy after first success).
+        timeout: this.warmedUp ? 5e3 : 12e3
       });
       if (!quotes || quotes.length === 0) return null;
       const best = quotes.filter((q) => BigInt(q.amountOut) > 0n).sort((a, b) => {
@@ -930,6 +938,7 @@ var SevenKProtocolPool = class {
       if (!best) return null;
       const amountOut = BigInt(best.simulatedAmountOut ?? best.amountOut);
       if (amountOut === 0n) return null;
+      this.warmedUp = true;
       const key = this.cacheKey(tokenIn, tokenOut, amountIn);
       this.quoteCache.set(key, { metaQuote: best, expiry: Date.now() + this.CACHE_TTL });
       const rawOut = BigInt(best.rawAmountOut);
@@ -1048,6 +1057,12 @@ var Pathfinder = class {
   }
   aggregator;
   async findBestRoute(tokenIn, tokenOut, amountIn, maxHops = 3, excludeProtocols = []) {
+    let result = await this.findBestRouteOnce(tokenIn, tokenOut, amountIn, maxHops, excludeProtocols);
+    if (result) return result;
+    result = await this.findBestRouteOnce(tokenIn, tokenOut, amountIn, maxHops, excludeProtocols);
+    return result;
+  }
+  async findBestRouteOnce(tokenIn, tokenOut, amountIn, maxHops, excludeProtocols) {
     const bridgeSymbols = maxHops >= 2 ? BRIDGE_TOKENS.filter((sym) => sym !== tokenIn.symbol && sym !== tokenOut.symbol) : [];
     const [directStep, ...hopRoutes] = await Promise.all([
       this.aggregator.getBestQuote(tokenIn, tokenOut, amountIn, excludeProtocols),

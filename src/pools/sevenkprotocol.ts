@@ -28,6 +28,13 @@ export class SevenKProtocolPool {
     return this.metaAgPromise
   }
 
+  /** Tracks whether this instance has ever had a successful quote — used to extend
+   * the timeout for cold starts. The 7K SDK internally races multiple providers
+   * (bluefin7k, cetus, flowx, okx); the first invocation has to spin all of them
+   * up cold, which often blows past a 5s window. After the first success the
+   * SDK's internal state is warm and 2-3s is plenty. */
+  private warmedUp = false
+
   async getQuote(tokenIn: Token, tokenOut: Token, amountIn: bigint): Promise<RouteStep | null> {
     try {
       const metaAg = await this.getMetaAg()
@@ -35,7 +42,9 @@ export class SevenKProtocolPool {
         coinTypeIn: tokenIn.type,
         coinTypeOut: tokenOut.type,
         amountIn: amountIn.toString(),
-        timeout: 5000,
+        // Cold start: 12s (gives the slowest provider room to respond at least once).
+        // Warm: 5s (snappy after first success).
+        timeout: this.warmedUp ? 5000 : 12_000,
       })
 
       if (!quotes || quotes.length === 0) return null
@@ -53,6 +62,9 @@ export class SevenKProtocolPool {
 
       const amountOut = BigInt(best.simulatedAmountOut ?? best.amountOut)
       if (amountOut === 0n) return null
+
+      // First successful quote — collapse subsequent calls to the shorter timeout.
+      this.warmedUp = true
 
       // Cache the best MetaQuote for PTB building
       const key = this.cacheKey(tokenIn, tokenOut, amountIn)
