@@ -10,7 +10,10 @@ npm install routex-sui
 
 ## Overview
 
-Routex queries **seven liquidity sources** simultaneously, selects the route with the highest net output, and constructs a single atomic PTB ready to sign and submit. If any step in a multi-hop route fails on-chain, the entire transaction reverts.
+Routex queries every supported liquidity source in parallel, selects the route with the highest net output, and constructs a single atomic PTB ready to sign and submit. If any step in a multi-hop route fails on-chain, the entire transaction reverts.
+
+> **Currently active sources on Sui mainnet with `@mysten/sui@^2`:** DeepBook V3, Aftermath Finance.
+> Five other DEX integrations (Cetus, Turbos, 7K, FlowX, Hop) are wired but inactive — their SDKs either pin `@mysten/sui` v1 (BCS schema incompatible with v2) or return non-composable Transaction objects that cannot be chained into our PTB. See [Sui SDK version compatibility](#sui-sdk-version-compatibility) for the full breakdown. Once an upstream SDK ships v2 support, the relevant pool re-activates with no consumer code change.
 
 ---
 
@@ -19,6 +22,9 @@ Routex queries **seven liquidity sources** simultaneously, selects the route wit
 ```typescript
 import Routex from 'routex-sui'
 
+// Construct ONCE at app startup and reuse — the first quote on a fresh
+// instance is ~5–15s (Aftermath SDK fetches its pool catalog on init);
+// subsequent quotes return in ~1–2s.
 const routex = new Routex('mainnet')
 
 const quote = await routex.getQuote({
