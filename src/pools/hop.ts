@@ -1,6 +1,7 @@
 import { HopApi } from '@hop.ag/sdk'
 import type { Token, RouteStep } from '../types.js'
 import type { QuoteResponse } from '@hop.ag/sdk'
+import { debugWarn } from '../utils/debug.js'
 
 // Mainnet RPC URL — Hop uses this for on-chain building only
 const SUI_MAINNET_RPC = 'https://fullnode.mainnet.sui.io:443'
@@ -75,7 +76,8 @@ export class HopPool {
         fee,
         priceImpact,
       }
-    } catch {
+    } catch (err) {
+      debugWarn('HopPool', `getQuote(${tokenIn.symbol}->${tokenOut.symbol}, ${amountIn})`, err)
       return null
     }
   }

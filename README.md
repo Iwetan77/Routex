@@ -101,17 +101,45 @@ Executes the pre-built PTB. Throws if the quote has expired.
 
 ## Supported Protocols
 
-| Protocol | Type | Tier | Status |
+| Protocol | Type | @mysten/sui | Status |
 |---|---|---|---|
-| DeepBook V3 | Central limit order book | 1 | Mainnet + Testnet |
-| Cetus | Concentrated liquidity AMM | 1 | Mainnet |
-| Aftermath Finance | Multi-asset pools | 1 | Mainnet |
-| Turbos Finance | Concentrated liquidity AMM | 1 | Mainnet |
-| Hop Aggregator | Meta-aggregator | 1 | Mainnet |
-| 7K Protocol | Meta-aggregator (incl. Bluefin) | 1 | Mainnet |
-| FlowX Finance | Multi-pool AMM | 2 | Mainnet |
+| DeepBook V3 | Central limit order book | v1 or v2 | ✅ Quote + Build + Execute |
+| Aftermath Finance | Multi-asset pools | **v2** | ✅ Quote + Build + Execute |
+| 7K Protocol | Meta-aggregator (incl. Bluefin/Cetus/FlowX/OKX internally) | **v1** | ⚠ Auto-disabled on v2 |
+| Cetus | Concentrated liquidity AMM | **v1** | ⚠ Auto-disabled (BCS schema mismatch on v2) |
+| Turbos Finance | Concentrated liquidity AMM | **v1** | ⚠ Quote only — no PTB builder |
+| Hop Aggregator | Meta-aggregator | **v2** | ⚠ Quote only — no PTB builder |
+| FlowX Finance | Multi-pool AMM | **v2** | ⚠ Quote only — no PTB builder |
 
-All sources are queried in parallel via `Promise.allSettled`. A failing source never blocks others — Routex always returns the best available quote.
+All sources are queried in parallel via `Promise.allSettled`. A failing source never blocks others — Routex always returns the best available quote from a buildable protocol.
+
+### Sui SDK version compatibility
+
+The Sui DEX ecosystem is currently split between two majors of `@mysten/sui`:
+
+- **v1 SDKs**: 7K Protocol, Cetus, Turbos
+- **v2 SDKs**: Aftermath, FlowX, Hop
+
+No combination of these SDKs is simultaneously compatible. routex-sui targets `@mysten/sui` **v2** to align with the most actively maintained DEXes (Aftermath, plus DeepBook which works with both). When `@mysten/sui` v2 is resolved in your project, v1-only protocols are detected at module load and disabled automatically — their liquidity is still partially reachable via 7K Protocol's internal aggregation when 7K itself becomes v2-compatible upstream.
+
+To diagnose why a pool returned no quote, enable verbose logging:
+
+```bash
+ROUTEX_DEBUG=1 node app.js
+```
+
+or programmatically:
+
+```typescript
+import { setDebug } from 'routex-sui'
+setDebug(true)
+```
+
+Every silenced pool error is then logged as:
+
+```
+[routex-sui] AftermathPool getQuote(SUI->USDC, 90000000): <underlying error>
+```
 
 ---
 

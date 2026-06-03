@@ -3,6 +3,7 @@ import { DeepBookClient } from '@mysten/deepbook-v3'
 import { testnetCoins, testnetPools, mainnetCoins, mainnetPools } from '@mysten/deepbook-v3'
 import type { Token, RouteStep } from '../types.js'
 import { fromBaseUnits } from '../utils/tokens.js'
+import { debugWarn } from '../utils/debug.js'
 
 // A neutral address for simulation queries (no signing needed)
 const SIMULATION_ADDRESS = '0x0000000000000000000000000000000000000000000000000000000000000001'
@@ -139,7 +140,8 @@ export class DeepBookPool {
         fee: tradeParams.takerFee,
         priceImpact,
       }
-    } catch {
+    } catch (err) {
+      debugWarn('DeepBookPool', `getQuote(${tokenIn.symbol}->${tokenOut.symbol}, ${amountIn})`, err)
       return null
     }
   }

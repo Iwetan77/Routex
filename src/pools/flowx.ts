@@ -1,6 +1,7 @@
 import { AggregatorQuoter, TradeBuilder } from '@flowx-finance/sdk'
 import type { Transaction } from '@mysten/sui/transactions'
 import type { Token, RouteStep } from '../types.js'
+import { debugWarn } from '../utils/debug.js'
 
 // FlowX uses its own NETWORK enum ('mainnet' | 'testnet')
 type FlowXNetwork = 'mainnet' | 'testnet'
@@ -57,7 +58,8 @@ export class FlowXPool {
         fee: 0.003, // FlowX default AMM fee 0.3 %
         priceImpact,
       }
-    } catch {
+    } catch (err) {
+      debugWarn('FlowXPool', `getQuote(${tokenIn.symbol}->${tokenOut.symbol}, ${amountIn})`, err)
       return null
     }
   }

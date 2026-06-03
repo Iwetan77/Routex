@@ -33,7 +33,8 @@ __export(index_exports, {
   Routex: () => Routex,
   default: () => index_default,
   getTokenBySymbol: () => getTokenBySymbol,
-  resolveToken: () => resolveToken
+  resolveToken: () => resolveToken,
+  setDebug: () => setDebug
 });
 module.exports = __toCommonJS(index_exports);
 var import_transactions3 = require("@mysten/sui/transactions");
@@ -208,6 +209,23 @@ function fromBaseUnits(amount, token) {
   return Number(amount) / token.scalar;
 }
 
+// src/utils/debug.ts
+var debugEnabled = (() => {
+  try {
+    return typeof process !== "undefined" && typeof process.env !== "undefined" && (process.env.ROUTEX_DEBUG === "1" || process.env.ROUTEX_DEBUG === "true");
+  } catch {
+    return false;
+  }
+})();
+function setDebug(on) {
+  debugEnabled = on;
+}
+function debugWarn(scope, msg, err) {
+  if (!debugEnabled) return;
+  const tail = err ? `: ${err instanceof Error ? err.message : String(err)}` : "";
+  console.warn(`[routex-sui] ${scope} ${msg}${tail}`);
+}
+
 // src/pools/deepbook.ts
 var SIMULATION_ADDRESS = "0x0000000000000000000000000000000000000000000000000000000000000001";
 var TESTNET_SYMBOL_MAP = {
@@ -311,7 +329,8 @@ var DeepBookPool = class {
         fee: tradeParams.takerFee,
         priceImpact
       };
-    } catch {
+    } catch (err) {
+      debugWarn("DeepBookPool", `getQuote(${tokenIn.symbol}->${tokenOut.symbol}, ${amountIn})`, err);
       return null;
     }
   }
@@ -422,7 +441,8 @@ var CetusPool = class {
         }
       }
       return bestStep;
-    } catch {
+    } catch (err) {
+      debugWarn("CetusPool", `getQuote(${tokenIn.symbol}->${tokenOut.symbol}, ${amountIn})`, err);
       return null;
     }
   }
@@ -505,10 +525,17 @@ var AftermathPool = class {
   ensureInit() {
     if (this.router !== null) return Promise.resolve();
     if (this.initPromise) return this.initPromise;
+    const sdkAny = this.sdk;
+    const initFn = typeof sdkAny.bootstrap === "function" ? sdkAny.bootstrap.bind(this.sdk) : typeof sdkAny.init === "function" ? sdkAny.init.bind(this.sdk) : null;
+    if (!initFn) {
+      return Promise.reject(new Error(
+        "Aftermath SDK has neither init() nor bootstrap(); installed version is incompatible. Check aftermath-ts-sdk semver in routex-sui peer deps."
+      ));
+    }
     this.initPromise = Promise.race([
-      this.sdk.init(),
+      initFn(),
       new Promise(
-        (_, reject) => setTimeout(() => reject(new Error("Aftermath init timeout")), 5e3)
+        (_, reject) => setTimeout(() => reject(new Error("Aftermath init timeout")), 15e3)
       )
     ]).then(() => {
       this.router = this.sdk.Router();
@@ -574,7 +601,8 @@ var AftermathPool = class {
         fee: route.netTradeFeePercentage,
         priceImpact
       };
-    } catch {
+    } catch (err) {
+      debugWarn("AftermathPool", `getQuote(${tokenIn.symbol}->${tokenOut.symbol}, ${amountIn})`, err);
       return null;
     }
   }
@@ -670,7 +698,8 @@ var TurbosPool = class {
         }
       }
       return bestStep;
-    } catch {
+    } catch (err) {
+      debugWarn("TurbosPool", `getQuote(${tokenIn.symbol}->${tokenOut.symbol}, ${amountIn})`, err);
       return null;
     }
   }
@@ -787,7 +816,8 @@ var FlowXPool = class {
         // FlowX default AMM fee 0.3 %
         priceImpact
       };
-    } catch {
+    } catch (err) {
+      debugWarn("FlowXPool", `getQuote(${tokenIn.symbol}->${tokenOut.symbol}, ${amountIn})`, err);
       return null;
     }
   }
@@ -874,7 +904,8 @@ var HopPool = class {
         fee,
         priceImpact
       };
-    } catch {
+    } catch (err) {
+      debugWarn("HopPool", `getQuote(${tokenIn.symbol}->${tokenOut.symbol}, ${amountIn})`, err);
       return null;
     }
   }
@@ -892,7 +923,15 @@ var HopPool = class {
 };
 
 // src/pools/sevenkprotocol.ts
+var SuiTransactions = __toESM(require("@mysten/sui/transactions"), 1);
 var import_transactions = require("@mysten/sui/transactions");
+var SEVENK_SDK_COMPATIBLE = SuiTransactions.Commands != null;
+if (!SEVENK_SDK_COMPATIBLE) {
+  debugWarn(
+    "SevenKProtocolPool",
+    'disabled: installed @mysten/sui has no `Commands` export (7K SDK requires @mysten/sui v1). Set ROUTEX_DEBUG=1 to confirm. See README "Sui SDK version compatibility".'
+  );
+}
 var SevenKProtocolPool = class {
   constructor(network) {
     this.network = network;
@@ -903,7 +942,16 @@ var SevenKProtocolPool = class {
   metaAgPromise = null;
   quoteCache = /* @__PURE__ */ new Map();
   CACHE_TTL = 3e4;
+  /** True when the runtime's @mysten/sui version is compatible with 7K SDK. */
+  isAvailable() {
+    return SEVENK_SDK_COMPATIBLE;
+  }
   getMetaAg() {
+    if (!SEVENK_SDK_COMPATIBLE) {
+      return Promise.reject(new Error(
+        "7K SDK requires @mysten/sui v1; installed major is v2. Pool is disabled."
+      ));
+    }
     if (!this.metaAgPromise) {
       this.metaAgPromise = import("@7kprotocol/sdk-ts").then((mod) => new mod.MetaAg()).catch((err) => {
         this.metaAgPromise = null;
@@ -919,6 +967,7 @@ var SevenKProtocolPool = class {
    * SDK's internal state is warm and 2-3s is plenty. */
   warmedUp = false;
   async getQuote(tokenIn, tokenOut, amountIn) {
+    if (!SEVENK_SDK_COMPATIBLE) return null;
     try {
       const metaAg = await this.getMetaAg();
       const quotes = await metaAg.quote({
@@ -955,7 +1004,8 @@ var SevenKProtocolPool = class {
         fee,
         priceImpact
       };
-    } catch {
+    } catch (err) {
+      debugWarn("SevenKProtocolPool", `getQuote(${tokenIn.symbol}->${tokenOut.symbol}, ${amountIn})`, err);
       return null;
     }
   }
@@ -1545,6 +1595,7 @@ var index_default = Routex;
 0 && (module.exports = {
   Routex,
   getTokenBySymbol,
-  resolveToken
+  resolveToken,
+  setDebug
 });
 //# sourceMappingURL=index.cjs.map

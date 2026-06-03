@@ -1,6 +1,7 @@
 import { Aftermath, type Router, type RouterCompleteTradeRoute } from 'aftermath-ts-sdk'
 import type { Transaction, TransactionObjectArgument } from '@mysten/sui/transactions'
 import type { Token, RouteStep } from '../types.js'
+import { debugWarn } from '../utils/debug.js'
 
 // Aftermath SDK expects uppercase network strings
 const NETWORK_MAP = {
@@ -28,13 +29,32 @@ export class AftermathPool {
     if (this.router !== null) return Promise.resolve()
     if (this.initPromise) return this.initPromise
 
-    // sdk.init() fetches Aftermath pool metadata and can hang indefinitely.
-    // Race it against a 5 s deadline; on timeout the promise rejects so
-    // the caller catches and returns null (same as a network error).
+    // Aftermath SDK renamed `init()` → `bootstrap()` in 2.1.0 but older
+    // versions still ship `init()`. Probe both so we work across the
+    // supported version range (>=2.0.0).
+    const sdkAny = this.sdk as any
+    const initFn: (() => Promise<void>) | null =
+      typeof sdkAny.bootstrap === 'function' ? sdkAny.bootstrap.bind(this.sdk)
+      : typeof sdkAny.init === 'function'    ? sdkAny.init.bind(this.sdk)
+      : null
+
+    if (!initFn) {
+      // SDK shape unknown — return rejected promise so caller logs and falls back.
+      return Promise.reject(new Error(
+        'Aftermath SDK has neither init() nor bootstrap(); installed version is ' +
+        'incompatible. Check aftermath-ts-sdk semver in routex-sui peer deps.'
+      ))
+    }
+
+    // Race init/bootstrap against a deadline so a slow Aftermath API call
+    // doesn't hang the entire pathfinder. Aftermath's init() fetches the full
+    // pool metadata catalog and can take 8-12 s on a cold start. After the
+    // first success we cache the router, so subsequent quotes are instant.
+    // 15 s gives the cold start room while still bounding the worst case.
     this.initPromise = Promise.race([
-      this.sdk.init(),
+      initFn(),
       new Promise<void>((_, reject) =>
-        setTimeout(() => reject(new Error('Aftermath init timeout')), 5_000)
+        setTimeout(() => reject(new Error('Aftermath init timeout')), 15_000)
       ),
     ])
       .then(() => {
@@ -131,7 +151,8 @@ export class AftermathPool {
         fee: route.netTradeFeePercentage,
         priceImpact,
       }
-    } catch {
+    } catch (err) {
+      debugWarn('AftermathPool', `getQuote(${tokenIn.symbol}->${tokenOut.symbol}, ${amountIn})`, err)
       return null
     }
   }

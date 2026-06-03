@@ -62,6 +62,23 @@ interface ExecuteResult {
 declare function resolveToken(symbolOrType: string): Token;
 declare function getTokenBySymbol(symbol: string): Token | null;
 
+/**
+ * Debug logging for routex-sui. Off by default to keep production consoles clean,
+ * but vital for diagnosing why a pool is silently returning null.
+ *
+ * Enable via either:
+ *   - Environment variable: ROUTEX_DEBUG=1
+ *   - Programmatic:         setDebug(true)
+ *
+ * When enabled, every silenced getQuote error is logged as:
+ *   [routex-sui] <PoolName>.getQuote(SUI->USDC, 90000000n) failed: <error>
+ *
+ * This addresses a recurring pain point: pools wrap their SDK calls in
+ * try { ... } catch { return null }. Real errors (peer-dep mismatch, SDK
+ * init failure, network errors) become indistinguishable from "no liquidity".
+ */
+declare function setDebug(on: boolean): void;
+
 declare class Routex {
     private aggregator;
     private pathfinder;
@@ -81,4 +98,4 @@ declare class Routex {
     execute(params: ExecuteParams): Promise<ExecuteResult>;
 }
 
-export { type ExecuteParams, type ExecuteResult, type GetQuoteParams, Routex, type RoutexQuote, Routex as default, getTokenBySymbol, resolveToken };
+export { type ExecuteParams, type ExecuteResult, type GetQuoteParams, Routex, type RoutexQuote, Routex as default, getTokenBySymbol, resolveToken, setDebug };

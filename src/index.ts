@@ -174,4 +174,5 @@ export class Routex {
 
 export type { RoutexQuote, GetQuoteParams, ExecuteParams, ExecuteResult } from './types.js'
 export { resolveToken, getTokenBySymbol } from './utils/tokens.js'
+export { setDebug } from './utils/debug.js'
 export default Routex

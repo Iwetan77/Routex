@@ -1,5 +1,6 @@
 import { TurbosSdk, Network, type Pool as PoolModule } from 'turbos-clmm-sdk'
 import type { Token, RouteStep } from '../types.js'
+import { debugWarn } from '../utils/debug.js'
 
 type PoolRecord = PoolModule.Pool
 
@@ -77,7 +78,8 @@ export class TurbosPool {
       }
 
       return bestStep
-    } catch {
+    } catch (err) {
+      debugWarn('TurbosPool', `getQuote(${tokenIn.symbol}->${tokenOut.symbol}, ${amountIn})`, err)
       return null
     }
   }

@@ -2,6 +2,7 @@ import { initCetusSDK, type CetusClmmSDK, type Pool } from '@cetusprotocol/cetus
 import BN from 'bn.js'
 import type { Token, RouteStep } from '../types.js'
 import { fromBaseUnits, normalizeCoinType, coinTypesEqual } from '../utils/tokens.js'
+import { debugWarn } from '../utils/debug.js'
 
 /**
  * Curated mainnet Cetus pool IDs for major bridge-token pairs.
@@ -136,7 +137,8 @@ export class CetusPool {
       }
 
       return bestStep
-    } catch {
+    } catch (err) {
+      debugWarn('CetusPool', `getQuote(${tokenIn.symbol}->${tokenOut.symbol}, ${amountIn})`, err)
       return null
     }
   }

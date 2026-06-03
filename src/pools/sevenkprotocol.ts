@@ -1,10 +1,39 @@
+import * as SuiTransactions from '@mysten/sui/transactions'
 import { type Transaction, coinWithBalance } from '@mysten/sui/transactions'
 import type { Token, RouteStep } from '../types.js'
+import { debugWarn } from '../utils/debug.js'
 
 // Quote cache entry
 interface CachedQuote {
   metaQuote: any
   expiry: number
+}
+
+/**
+ * Runtime check for whether 7K SDK can possibly load.
+ *
+ * @7kprotocol/sdk-ts's bundled code does:
+ *   import { Commands as xt, Transaction as it, TransactionDataBuilder as Dt }
+ *     from "@mysten/sui/transactions"
+ *
+ * `Commands` was removed when @mysten/sui went from v1 to v2 (the API was
+ * inlined into Transaction's builder methods). So if `Commands` is missing
+ * from the resolved @mysten/sui/transactions module, the dynamic import of
+ * 7K will throw a SyntaxError before any of its methods can be called.
+ *
+ * We detect this at module load and use it to short-circuit getQuote so the
+ * aggregator can fall through to other DEXes instead of silently waiting for
+ * a guaranteed-to-fail import.
+ */
+const SEVENK_SDK_COMPATIBLE: boolean = (SuiTransactions as any).Commands != null
+
+if (!SEVENK_SDK_COMPATIBLE) {
+  debugWarn(
+    'SevenKProtocolPool',
+    'disabled: installed @mysten/sui has no `Commands` export ' +
+    '(7K SDK requires @mysten/sui v1). Set ROUTEX_DEBUG=1 to confirm. ' +
+    'See README "Sui SDK version compatibility".'
+  )
 }
 
 export class SevenKProtocolPool {
@@ -16,7 +45,18 @@ export class SevenKProtocolPool {
 
   constructor(private readonly network: 'mainnet' | 'testnet') {}
 
+  /** True when the runtime's @mysten/sui version is compatible with 7K SDK. */
+  isAvailable(): boolean {
+    return SEVENK_SDK_COMPATIBLE
+  }
+
   private getMetaAg(): Promise<any> {
+    if (!SEVENK_SDK_COMPATIBLE) {
+      return Promise.reject(new Error(
+        '7K SDK requires @mysten/sui v1; installed major is v2. ' +
+        'Pool is disabled.'
+      ))
+    }
     if (!this.metaAgPromise) {
       this.metaAgPromise = import('@7kprotocol/sdk-ts')
         .then(mod => new mod.MetaAg())
@@ -36,6 +76,7 @@ export class SevenKProtocolPool {
   private warmedUp = false
 
   async getQuote(tokenIn: Token, tokenOut: Token, amountIn: bigint): Promise<RouteStep | null> {
+    if (!SEVENK_SDK_COMPATIBLE) return null  // Disabled at module load; no work to do.
     try {
       const metaAg = await this.getMetaAg()
       const quotes = await metaAg.quote({
@@ -89,7 +130,8 @@ export class SevenKProtocolPool {
         fee,
         priceImpact,
       }
-    } catch {
+    } catch (err) {
+      debugWarn('SevenKProtocolPool', `getQuote(${tokenIn.symbol}->${tokenOut.symbol}, ${amountIn})`, err)
       return null
     }
   }
