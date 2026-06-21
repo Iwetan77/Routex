@@ -2,12 +2,32 @@
 import { Transaction as Transaction2 } from "@mysten/sui/transactions";
 
 // src/pools/deepbook.ts
-import { SuiJsonRpcClient as SuiClient, getJsonRpcFullnodeUrl as getFullnodeUrl } from "@mysten/sui/jsonRpc";
+import { SuiJsonRpcClient as SuiClient2, getJsonRpcFullnodeUrl as getFullnodeUrl2 } from "@mysten/sui/jsonRpc";
 import { DeepBookClient } from "@mysten/deepbook-v3";
 import { testnetCoins, testnetPools, mainnetCoins, mainnetPools } from "@mysten/deepbook-v3";
 
 // src/utils/tokens.ts
 import { normalizeStructTag } from "@mysten/sui/utils";
+import { SuiJsonRpcClient as SuiClient, getJsonRpcFullnodeUrl as getFullnodeUrl } from "@mysten/sui/jsonRpc";
+
+// src/utils/debug.ts
+var debugEnabled = (() => {
+  try {
+    return typeof process !== "undefined" && typeof process.env !== "undefined" && (process.env.ROUTEX_DEBUG === "1" || process.env.ROUTEX_DEBUG === "true");
+  } catch {
+    return false;
+  }
+})();
+function setDebug(on) {
+  debugEnabled = on;
+}
+function debugWarn(scope, msg, err) {
+  if (!debugEnabled) return;
+  const tail = err ? `: ${err instanceof Error ? err.message : String(err)}` : "";
+  console.warn(`[routex-sui] ${scope} ${msg}${tail}`);
+}
+
+// src/utils/tokens.ts
 function normalizeCoinType(type) {
   try {
     return normalizeStructTag(type);
@@ -153,39 +173,83 @@ var MAINNET_TOKENS = {
   }
 };
 var tokenRegistry = TESTNET_TOKENS;
+var activeNetwork = "testnet";
 function setNetwork(network) {
+  activeNetwork = network;
   tokenRegistry = network === "mainnet" ? MAINNET_TOKENS : TESTNET_TOKENS;
 }
-function resolveToken(symbolOrType) {
+function looksLikeStructType(s) {
+  return s.startsWith("0x") && s.split("::").length === 3;
+}
+var onChainTokenCache = /* @__PURE__ */ new Map();
+var metadataClient = null;
+function getMetadataClient() {
+  if (!metadataClient || metadataClient.network !== activeNetwork) {
+    metadataClient = {
+      client: new SuiClient({ url: getFullnodeUrl(activeNetwork) }),
+      network: activeNetwork
+    };
+  }
+  return metadataClient.client;
+}
+async function resolveTokenAsync(symbolOrType) {
+  const sync = tryResolveSync(symbolOrType);
+  if (sync) return sync;
+  if (looksLikeStructType(symbolOrType)) {
+    const normalized = normalizeCoinType(symbolOrType);
+    const cached = onChainTokenCache.get(normalized);
+    if (cached) return cached;
+    try {
+      const meta = await getMetadataClient().getCoinMetadata({ coinType: normalized });
+      if (!meta) {
+        throw new Error(
+          `Coin type "${symbolOrType}" has no on-chain CoinMetadata. The type may not exist or its CoinMetadata object was not published.`
+        );
+      }
+      const decimals = meta.decimals;
+      const token = {
+        address: normalized.split("::")[0],
+        type: normalized,
+        symbol: meta.symbol,
+        decimals,
+        name: meta.name || meta.symbol,
+        scalar: 10 ** decimals
+      };
+      onChainTokenCache.set(normalized, token);
+      return token;
+    } catch (err) {
+      debugWarn("resolveTokenAsync", `getCoinMetadata(${normalized}) failed`, err);
+      throw new Error(
+        `Failed to fetch CoinMetadata for "${symbolOrType}": ` + (err instanceof Error ? err.message : String(err))
+      );
+    }
+  }
+  throw new Error(
+    `Unknown token: "${symbolOrType}". Pass a registry symbol (${Object.keys(tokenRegistry).join(", ")}) or a full Move type like 0x356a...::wal::WAL.`
+  );
+}
+function tryResolveSync(symbolOrType) {
   const upper = symbolOrType.toUpperCase();
   if (tokenRegistry[upper]) return tokenRegistry[upper];
   for (const token of Object.values(tokenRegistry)) {
-    if (token.type === symbolOrType || token.address === symbolOrType) return token;
+    if (token.type === symbolOrType || token.address === symbolOrType || coinTypesEqual(token.type, symbolOrType)) {
+      return token;
+    }
   }
-  throw new Error(`Unknown token: ${symbolOrType}. Supported: ${Object.keys(tokenRegistry).join(", ")}`);
+  return null;
+}
+function resolveToken(symbolOrType) {
+  const found = tryResolveSync(symbolOrType);
+  if (found) return found;
+  throw new Error(
+    `Unknown token: ${symbolOrType}. Supported registry symbols: ${Object.keys(tokenRegistry).join(", ")}. For arbitrary Sui coin types pass the full Move type to getQuote() \u2014 routex resolves on-chain CoinMetadata automatically.`
+  );
 }
 function getTokenBySymbol(symbol) {
   return tokenRegistry[symbol.toUpperCase()] ?? null;
 }
 function fromBaseUnits(amount, token) {
   return Number(amount) / token.scalar;
-}
-
-// src/utils/debug.ts
-var debugEnabled = (() => {
-  try {
-    return typeof process !== "undefined" && typeof process.env !== "undefined" && (process.env.ROUTEX_DEBUG === "1" || process.env.ROUTEX_DEBUG === "true");
-  } catch {
-    return false;
-  }
-})();
-function setDebug(on) {
-  debugEnabled = on;
-}
-function debugWarn(scope, msg, err) {
-  if (!debugEnabled) return;
-  const tail = err ? `: ${err instanceof Error ? err.message : String(err)}` : "";
-  console.warn(`[routex-sui] ${scope} ${msg}${tail}`);
 }
 
 // src/pools/deepbook.ts
@@ -230,7 +294,7 @@ var DeepBookPool = class {
   poolKeyMap;
   constructor(network = "testnet", address) {
     this.network = network;
-    this.suiClient = new SuiClient({ url: getFullnodeUrl(network) });
+    this.suiClient = new SuiClient2({ url: getFullnodeUrl2(network) });
     this.symbolMap = network === "testnet" ? TESTNET_SYMBOL_MAP : MAINNET_SYMBOL_MAP;
     this.poolKeyMap = network === "testnet" ? TESTNET_POOL_KEYS : MAINNET_POOL_KEYS;
     const coins = network === "testnet" ? testnetCoins : mainnetCoins;
@@ -1129,7 +1193,7 @@ var Pathfinder = class {
 
 // src/ptb/builder.ts
 import { Transaction } from "@mysten/sui/transactions";
-import { SuiJsonRpcClient as SuiClient2, getJsonRpcFullnodeUrl as getFullnodeUrl2 } from "@mysten/sui/jsonRpc";
+import { SuiJsonRpcClient as SuiClient3, getJsonRpcFullnodeUrl as getFullnodeUrl3 } from "@mysten/sui/jsonRpc";
 import { TransactionUtil } from "@cetusprotocol/cetus-sui-clmm-sdk";
 
 // src/utils/math.ts
@@ -1146,7 +1210,7 @@ var PTBBuilder = class {
     this.cetusPool = cetusPool;
     this.aftermathPool = aftermathPool;
     this.sevenkPool = sevenkPool;
-    this.suiClient = new SuiClient2({ url: getFullnodeUrl2(network) });
+    this.suiClient = new SuiClient3({ url: getFullnodeUrl3(network) });
   }
   network;
   deepbookPool;
@@ -1387,11 +1451,11 @@ var PTBBuilder = class {
 };
 
 // src/ptb/executor.ts
-import { SuiJsonRpcClient as SuiClient3, getJsonRpcFullnodeUrl as getFullnodeUrl3 } from "@mysten/sui/jsonRpc";
+import { SuiJsonRpcClient as SuiClient4, getJsonRpcFullnodeUrl as getFullnodeUrl4 } from "@mysten/sui/jsonRpc";
 var PTBExecutor = class {
   client;
   constructor(network) {
-    this.client = new SuiClient3({ url: getFullnodeUrl3(network) });
+    this.client = new SuiClient4({ url: getFullnodeUrl4(network) });
   }
   async execute(ptb, signer) {
     if (typeof signer.getPublicKey === "function") {
@@ -1475,8 +1539,10 @@ var Routex = class {
     this.cetusPool.updateSender(address);
   }
   async getQuote(params) {
-    const tokenIn = resolveToken(params.from);
-    const tokenOut = resolveToken(params.to);
+    const [tokenIn, tokenOut] = await Promise.all([
+      resolveTokenAsync(params.from),
+      resolveTokenAsync(params.to)
+    ]);
     const amountIn = BigInt(params.amount);
     const slippage = params.slippageTolerance ?? 5e-3;
     const SIMULATION_ADDRESS2 = "0x0000000000000000000000000000000000000000000000000000000000000001";
@@ -1558,6 +1624,7 @@ export {
   index_default as default,
   getTokenBySymbol,
   resolveToken,
+  resolveTokenAsync,
   setDebug
 };
 //# sourceMappingURL=index.js.map

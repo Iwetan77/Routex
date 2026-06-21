@@ -1,5 +1,7 @@
 import { normalizeStructTag } from '@mysten/sui/utils'
+import { SuiJsonRpcClient as SuiClient, getJsonRpcFullnodeUrl as getFullnodeUrl } from '@mysten/sui/jsonRpc'
 import type { Token } from '../types.js'
+import { debugWarn } from './debug.js'
 
 /**
  * Normalize a Sui struct/coin type string so that `0x2::sui::SUI` and
@@ -158,22 +160,126 @@ const MAINNET_TOKENS: Record<string, Token> = {
 }
 
 let tokenRegistry = TESTNET_TOKENS
+let activeNetwork: 'mainnet' | 'testnet' = 'testnet'
 
 export function setNetwork(network: 'mainnet' | 'testnet') {
+  activeNetwork = network
   tokenRegistry = network === 'mainnet' ? MAINNET_TOKENS : TESTNET_TOKENS
 }
 
-export function resolveToken(symbolOrType: string): Token {
-  // Direct symbol lookup (case-insensitive)
-  const upper = symbolOrType.toUpperCase()
-  if (tokenRegistry[upper]) return tokenRegistry[upper]
+// ─── Dynamic token resolution via on-chain metadata ─────────────────────────
+//
+// The hardcoded registry only covers a dozen well-known symbols. To unlock
+// every coin type on Sui — WAL, memecoins, RWA tokens, anything — we fetch
+// CoinMetadata directly from the chain when the user passes a full Move type
+// string we don't have cached.
 
-  // Search by full type string
-  for (const token of Object.values(tokenRegistry)) {
-    if (token.type === symbolOrType || token.address === symbolOrType) return token
+/** A struct type looks like `0x<addr>::<module>::<Name>`. */
+function looksLikeStructType(s: string): boolean {
+  return s.startsWith('0x') && s.split('::').length === 3
+}
+
+// Cache: normalized type string -> Token. Lives for the process lifetime —
+// CoinMetadata is immutable per coin so this never goes stale.
+const onChainTokenCache = new Map<string, Token>()
+
+// Lazy per-network SuiClient just for metadata fetches.
+let metadataClient: { client: SuiClient; network: 'mainnet' | 'testnet' } | null = null
+function getMetadataClient(): SuiClient {
+  if (!metadataClient || metadataClient.network !== activeNetwork) {
+    metadataClient = {
+      client: new SuiClient({ url: getFullnodeUrl(activeNetwork) }),
+      network: activeNetwork,
+    }
+  }
+  return metadataClient.client
+}
+
+/**
+ * Resolve any coin type to a Token, fetching CoinMetadata on chain when needed.
+ *
+ * Accepts:
+ *   - A registry symbol  (e.g. 'SUI', 'USDC', 'DEEP')
+ *   - A full Move type   (e.g. '0x356a...::wal::WAL' for Walrus token, any memecoin, etc.)
+ *
+ * This is the async path used by `Routex.getQuote` — it gives users access to
+ * every token DeepBook or Aftermath actually routes, not just the 11 in the
+ * hardcoded registry.
+ */
+export async function resolveTokenAsync(symbolOrType: string): Promise<Token> {
+  // 1. Sync registry hit — fastest path, no RPC.
+  const sync = tryResolveSync(symbolOrType)
+  if (sync) return sync
+
+  // 2. Looks like a Move type? Fetch CoinMetadata from chain.
+  if (looksLikeStructType(symbolOrType)) {
+    const normalized = normalizeCoinType(symbolOrType)
+    const cached = onChainTokenCache.get(normalized)
+    if (cached) return cached
+
+    try {
+      const meta = await getMetadataClient().getCoinMetadata({ coinType: normalized })
+      if (!meta) {
+        throw new Error(
+          `Coin type "${symbolOrType}" has no on-chain CoinMetadata. ` +
+          `The type may not exist or its CoinMetadata object was not published.`,
+        )
+      }
+      const decimals = meta.decimals
+      const token: Token = {
+        address: normalized.split('::')[0],
+        type: normalized,
+        symbol: meta.symbol,
+        decimals,
+        name: meta.name || meta.symbol,
+        scalar: 10 ** decimals,
+      }
+      onChainTokenCache.set(normalized, token)
+      return token
+    } catch (err) {
+      debugWarn('resolveTokenAsync', `getCoinMetadata(${normalized}) failed`, err)
+      throw new Error(
+        `Failed to fetch CoinMetadata for "${symbolOrType}": ` +
+        (err instanceof Error ? err.message : String(err)),
+      )
+    }
   }
 
-  throw new Error(`Unknown token: ${symbolOrType}. Supported: ${Object.keys(tokenRegistry).join(', ')}`)
+  throw new Error(
+    `Unknown token: "${symbolOrType}". ` +
+    `Pass a registry symbol (${Object.keys(tokenRegistry).join(', ')}) ` +
+    `or a full Move type like 0x356a...::wal::WAL.`,
+  )
+}
+
+/** Sync resolution against the hardcoded registry only. Returns null for unknowns. */
+function tryResolveSync(symbolOrType: string): Token | null {
+  const upper = symbolOrType.toUpperCase()
+  if (tokenRegistry[upper]) return tokenRegistry[upper]
+  for (const token of Object.values(tokenRegistry)) {
+    if (token.type === symbolOrType
+        || token.address === symbolOrType
+        || coinTypesEqual(token.type, symbolOrType)) {
+      return token
+    }
+  }
+  return null
+}
+
+/**
+ * Synchronous resolution. Backwards-compatible: throws for any token not in the
+ * hardcoded registry. New code should prefer `resolveTokenAsync` for full
+ * Sui-wide coverage.
+ */
+export function resolveToken(symbolOrType: string): Token {
+  const found = tryResolveSync(symbolOrType)
+  if (found) return found
+  throw new Error(
+    `Unknown token: ${symbolOrType}. ` +
+    `Supported registry symbols: ${Object.keys(tokenRegistry).join(', ')}. ` +
+    `For arbitrary Sui coin types pass the full Move type to getQuote() — ` +
+    `routex resolves on-chain CoinMetadata automatically.`,
+  )
 }
 
 export function getTokenBySymbol(symbol: string): Token | null {

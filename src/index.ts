@@ -10,7 +10,7 @@ import { PoolAggregator } from './pools/aggregator.js'
 import { Pathfinder } from './router/pathfinder.js'
 import { PTBBuilder } from './ptb/builder.js'
 import { PTBExecutor } from './ptb/executor.js'
-import { resolveToken, setNetwork } from './utils/tokens.js'
+import { resolveToken, resolveTokenAsync, setNetwork } from './utils/tokens.js'
 import type { GetQuoteParams, ExecuteParams, ExecuteResult, Route, RoutexQuote } from './types.js'
 
 export class Routex {
@@ -62,8 +62,11 @@ export class Routex {
   }
 
   async getQuote(params: GetQuoteParams): Promise<RoutexQuote> {
-    const tokenIn  = resolveToken(params.from)
-    const tokenOut = resolveToken(params.to)
+    // Resolve in parallel — both may hit on-chain CoinMetadata for non-registry tokens.
+    const [tokenIn, tokenOut] = await Promise.all([
+      resolveTokenAsync(params.from),
+      resolveTokenAsync(params.to),
+    ])
     const amountIn = BigInt(params.amount)
     const slippage = params.slippageTolerance ?? 0.005
 
@@ -173,6 +176,6 @@ export class Routex {
 }
 
 export type { RoutexQuote, GetQuoteParams, ExecuteParams, ExecuteResult } from './types.js'
-export { resolveToken, getTokenBySymbol } from './utils/tokens.js'
+export { resolveToken, resolveTokenAsync, getTokenBySymbol } from './utils/tokens.js'
 export { setDebug } from './utils/debug.js'
 export default Routex
