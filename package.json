@@ -1,6 +1,6 @@
 {
   "name": "routex-sui",
-  "version": "1.4.0",
+  "version": "1.4.2",
   "description": "Headless swap routing for Sui. Best price across all liquidity. Atomic PTB execution.",
   "type": "module",
   "main": "dist/index.cjs",

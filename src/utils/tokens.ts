@@ -66,96 +66,160 @@ const TESTNET_TOKENS: Record<string, Token> = {
   },
 }
 
-// Mainnet token registry
+// Mainnet token registry.
+// All addresses verified against on-chain CoinMetadata. Symbol keys are the
+// common ticker users will type — when the metadata's `symbol` field differs
+// (e.g. "haSUI" vs "HASUI") we store the user-typed form. The full Move type
+// is what gets sent to the DEX SDKs.
+//
+// Any token NOT in this list is still routable — pass the full Move type
+// string to getQuote() and routex auto-fetches CoinMetadata.
 const MAINNET_TOKENS: Record<string, Token> = {
+  // ─── Native + bluechip stablecoins ───────────────────────────────────────
   SUI: {
     address: '0x0000000000000000000000000000000000000000000000000000000000000002',
     type: '0x0000000000000000000000000000000000000000000000000000000000000002::sui::SUI',
-    symbol: 'SUI',
-    decimals: 9,
-    name: 'Sui',
-    scalar: 1_000_000_000,
+    symbol: 'SUI', decimals: 9, name: 'Sui', scalar: 1_000_000_000,
   },
   USDC: {
     address: '0xdba34672e30cb065b1f93e3ab55318768fd6fef66c15942c9f7cb846e2f900e7',
     type: '0xdba34672e30cb065b1f93e3ab55318768fd6fef66c15942c9f7cb846e2f900e7::usdc::USDC',
-    symbol: 'USDC',
-    decimals: 6,
-    name: 'USD Coin',
-    scalar: 1_000_000,
+    symbol: 'USDC', decimals: 6, name: 'USDC', scalar: 1_000_000,
   },
   USDT: {
     address: '0xc060006111016b8a020ad5b33834984a437aaa7d3c74c18e09a95d48aceab08c',
     type: '0xc060006111016b8a020ad5b33834984a437aaa7d3c74c18e09a95d48aceab08c::coin::COIN',
-    symbol: 'USDT',
-    decimals: 6,
-    name: 'Tether USD',
-    scalar: 1_000_000,
+    symbol: 'USDT', decimals: 6, name: 'Tether USD', scalar: 1_000_000,
   },
-  DEEP: {
-    address: '0xdeeb7a4662eec9f2f3def03fb937a663dddaa2e215b8078a284d026b7946c270',
-    type: '0xdeeb7a4662eec9f2f3def03fb937a663dddaa2e215b8078a284d026b7946c270::deep::DEEP',
-    symbol: 'DEEP',
-    decimals: 6,
-    name: 'DeepBook Token',
-    scalar: 1_000_000,
-  },
-  WETH: {
-    address: '0xaf8cd5edc19c4512f4259f0bee101a40d41ebed738ade5874359610ef8eeced5',
-    type: '0xaf8cd5edc19c4512f4259f0bee101a40d41ebed738ade5874359610ef8eeced5::coin::COIN',
-    symbol: 'WETH',
-    decimals: 8,
-    name: 'Wrapped Ether',
-    scalar: 100_000_000,
-  },
-  // ─── Tokens with coverage on Turbos / FlowX / Hop / 7K ──────────────────
-  WBTC: {
-    address: '0x027792d9fed7f9844eb4839566001bb6f6cb4804f66aa2da6fe1ee242d896881',
-    type: '0x027792d9fed7f9844eb4839566001bb6f6cb4804f66aa2da6fe1ee242d896881::coin::COIN',
-    symbol: 'WBTC',
-    decimals: 8,
-    name: 'Wrapped BTC',
-    scalar: 100_000_000,
+  WUSDC: {
+    address: '0x5d4b302506645c37ff133b98c4b50a5ae14841659738d6d733d59d0d217a93bf',
+    type: '0x5d4b302506645c37ff133b98c4b50a5ae14841659738d6d733d59d0d217a93bf::coin::COIN',
+    symbol: 'WUSDC', decimals: 6, name: 'USD Coin (Wormhole)', scalar: 1_000_000,
   },
   BUCK: {
     address: '0xce7ff77a83ea0cb6fd39bd8748e2ec89a3f41e8efdc3f4eb123e0ca37b184db2',
     type: '0xce7ff77a83ea0cb6fd39bd8748e2ec89a3f41e8efdc3f4eb123e0ca37b184db2::buck::BUCK',
-    symbol: 'BUCK',
-    decimals: 9,
-    name: 'Bucket USD',
-    scalar: 1_000_000_000,
+    symbol: 'BUCK', decimals: 9, name: 'Bucket USD', scalar: 1_000_000_000,
   },
-  AUSD: {
-    address: '0x2053d08c1e2bd02791056171aab0fd12bd7cd7efad2ab8f6b9c8902f14129c58',
-    type: '0x2053d08c1e2bd02791056171aab0fd12bd7cd7efad2ab8f6b9c8902f14129c58::ausd::AUSD',
-    symbol: 'AUSD',
-    decimals: 6,
-    name: 'Aurus USD',
-    scalar: 1_000_000,
+  USDY: {
+    address: '0x960b531667636f39e85867775f52f6b1f220a058c4de786905bdf761e06a56bb',
+    type: '0x960b531667636f39e85867775f52f6b1f220a058c4de786905bdf761e06a56bb::usdy::USDY',
+    symbol: 'USDY', decimals: 6, name: 'Ondo US Dollar Yield', scalar: 1_000_000,
+  },
+  // ─── Wrapped majors ──────────────────────────────────────────────────────
+  WETH: {
+    address: '0xaf8cd5edc19c4512f4259f0bee101a40d41ebed738ade5874359610ef8eeced5',
+    type: '0xaf8cd5edc19c4512f4259f0bee101a40d41ebed738ade5874359610ef8eeced5::coin::COIN',
+    symbol: 'WETH', decimals: 8, name: 'Wrapped Ether', scalar: 100_000_000,
+  },
+  WBTC: {
+    address: '0x027792d9fed7f9844eb4839566001bb6f6cb4804f66aa2da6fe1ee242d896881',
+    type: '0x027792d9fed7f9844eb4839566001bb6f6cb4804f66aa2da6fe1ee242d896881::coin::COIN',
+    symbol: 'WBTC', decimals: 8, name: 'Wrapped BTC', scalar: 100_000_000,
+  },
+  SOL: {
+    address: '0xb7844e289a8410e50fb3ca48d69eb9cf29e27d223ef90353fe1bd8e27ff8f3f8',
+    type: '0xb7844e289a8410e50fb3ca48d69eb9cf29e27d223ef90353fe1bd8e27ff8f3f8::coin::COIN',
+    symbol: 'SOL', decimals: 8, name: 'Wrapped SOL', scalar: 100_000_000,
+  },
+  // ─── DeFi / infrastructure tokens ────────────────────────────────────────
+  DEEP: {
+    address: '0xdeeb7a4662eec9f2f3def03fb937a663dddaa2e215b8078a284d026b7946c270',
+    type: '0xdeeb7a4662eec9f2f3def03fb937a663dddaa2e215b8078a284d026b7946c270::deep::DEEP',
+    symbol: 'DEEP', decimals: 6, name: 'DeepBook Token', scalar: 1_000_000,
+  },
+  CETUS: {
+    address: '0x06864a6f921804860930db6ddbe2e16acdf8504495ea7481637a1c8b9a8fe54b',
+    type: '0x06864a6f921804860930db6ddbe2e16acdf8504495ea7481637a1c8b9a8fe54b::cetus::CETUS',
+    symbol: 'CETUS', decimals: 9, name: 'Cetus Token', scalar: 1_000_000_000,
+  },
+  TURBOS: {
+    address: '0x5d1f47ea69bb0de31c313d7acf89b890dbb8991ea8e03c6c355171f84bb1ba4a',
+    type: '0x5d1f47ea69bb0de31c313d7acf89b890dbb8991ea8e03c6c355171f84bb1ba4a::turbos::TURBOS',
+    symbol: 'TURBOS', decimals: 9, name: 'Turbos', scalar: 1_000_000_000,
+  },
+  FLX: {
+    address: '0x6dae8ca14311574fdfe555524ea48558e3d1360d1607d1c7f98af867e3b7976c',
+    type: '0x6dae8ca14311574fdfe555524ea48558e3d1360d1607d1c7f98af867e3b7976c::flx::FLX',
+    symbol: 'FLX', decimals: 8, name: 'FlowX', scalar: 100_000_000,
+  },
+  SCA: {
+    address: '0x7016aae72cfc67f2fadf55769c0a7dd54291a583b63051a5ed71081cce836ac6',
+    type: '0x7016aae72cfc67f2fadf55769c0a7dd54291a583b63051a5ed71081cce836ac6::sca::SCA',
+    symbol: 'SCA', decimals: 9, name: 'Scallop', scalar: 1_000_000_000,
   },
   NAVX: {
     address: '0xa99b8952d4f7d947ea77fe0ecdcc9e5fc0bcab2841d6e2a5aa00c3044e5544b5',
     type: '0xa99b8952d4f7d947ea77fe0ecdcc9e5fc0bcab2841d6e2a5aa00c3044e5544b5::navx::NAVX',
-    symbol: 'NAVX',
-    decimals: 9,
-    name: 'NAVI Token',
-    scalar: 1_000_000_000,
+    symbol: 'NAVX', decimals: 9, name: 'NAVX Token', scalar: 1_000_000_000,
   },
+  BLUE: {
+    address: '0xe1b45a0e641b9955a20aa0ad1c1f4ad86aad8afb07296d4085e349a50e90bdca',
+    type: '0xe1b45a0e641b9955a20aa0ad1c1f4ad86aad8afb07296d4085e349a50e90bdca::blue::BLUE',
+    symbol: 'BLUE', decimals: 9, name: 'Bluefin', scalar: 1_000_000_000,
+  },
+  SUIP: {
+    address: '0xe4239cd951f6c53d9c41e25270d80d31f925ad1655e5ba5b543843d4a66975ee',
+    type: '0xe4239cd951f6c53d9c41e25270d80d31f925ad1655e5ba5b543843d4a66975ee::SUIP::SUIP',
+    symbol: 'SUIP', decimals: 9, name: 'SuiPad', scalar: 1_000_000_000,
+  },
+  // ─── Liquid staking SUI variants ─────────────────────────────────────────
   HASUI: {
     address: '0xbde4ba4c2e274a60ce15c1cfff9e5c42e41654ac8b6d906a57efa4bd3c29f47d',
     type: '0xbde4ba4c2e274a60ce15c1cfff9e5c42e41654ac8b6d906a57efa4bd3c29f47d::hasui::HASUI',
-    symbol: 'HASUI',
-    decimals: 9,
-    name: 'Haedal Staked SUI',
-    scalar: 1_000_000_000,
+    symbol: 'HASUI', decimals: 9, name: 'Haedal Staked SUI', scalar: 1_000_000_000,
   },
   AFSUI: {
     address: '0xf325ce1300e8dac124071d3152c5c5ee6174914f8bc2161e88329cf579246efc',
     type: '0xf325ce1300e8dac124071d3152c5c5ee6174914f8bc2161e88329cf579246efc::afsui::AFSUI',
-    symbol: 'AFSUI',
-    decimals: 9,
-    name: 'Aftermath Finance Staked SUI',
-    scalar: 1_000_000_000,
+    symbol: 'AFSUI', decimals: 9, name: 'Aftermath Staked SUI', scalar: 1_000_000_000,
+  },
+  VSUI: {
+    address: '0x549e8b69270defbfafd4f94e17ec44cdbdd99820b33bda2278dea3b9a32d3f55',
+    type: '0x549e8b69270defbfafd4f94e17ec44cdbdd99820b33bda2278dea3b9a32d3f55::cert::CERT',
+    symbol: 'VSUI', decimals: 9, name: 'Volo Staked SUI', scalar: 1_000_000_000,
+  },
+  STSUI: {
+    address: '0xd1b72982e40348d069bb1ff701e634c117bb5f741f44dff91e472d3b01461e55',
+    type: '0xd1b72982e40348d069bb1ff701e634c117bb5f741f44dff91e472d3b01461e55::stsui::STSUI',
+    symbol: 'STSUI', decimals: 9, name: 'AlphaFi Staked SUI', scalar: 1_000_000_000,
+  },
+  // ─── Walrus + ecosystem ──────────────────────────────────────────────────
+  WAL: {
+    address: '0x356a26eb9e012a68958082340d4c4116e7f55615cf27affcff209cf0ae544f59',
+    type: '0x356a26eb9e012a68958082340d4c4116e7f55615cf27affcff209cf0ae544f59::wal::WAL',
+    symbol: 'WAL', decimals: 9, name: 'Walrus', scalar: 1_000_000_000,
+  },
+  NS: {
+    address: '0x5145494a5f5100e645e4b0aa950fa6b68f614e8c59e17bc5ded3495123a79178',
+    type: '0x5145494a5f5100e645e4b0aa950fa6b68f614e8c59e17bc5ded3495123a79178::ns::NS',
+    symbol: 'NS', decimals: 6, name: 'SuiNS Token', scalar: 1_000_000,
+  },
+  SEND: {
+    address: '0xb45fcfcc2cc07ce0702cc2d229621e046c906ef14d9b25e8e4d25f6e8763fef7',
+    type: '0xb45fcfcc2cc07ce0702cc2d229621e046c906ef14d9b25e8e4d25f6e8763fef7::send::SEND',
+    symbol: 'SEND', decimals: 6, name: 'Suilend', scalar: 1_000_000,
+  },
+  // ─── Popular memes (verified canonical addresses) ────────────────────────
+  FUD: {
+    address: '0x76cb819b01abed502bee8a702b4c2d547532c12f25001c9dea795a5e631c26f1',
+    type: '0x76cb819b01abed502bee8a702b4c2d547532c12f25001c9dea795a5e631c26f1::fud::FUD',
+    symbol: 'FUD', decimals: 5, name: 'FUD', scalar: 100_000,
+  },
+  LOFI: {
+    address: '0xf22da9a24ad027cccb5f2d496cbe91de953d363513db08a3a734d361c7c17503',
+    type: '0xf22da9a24ad027cccb5f2d496cbe91de953d363513db08a3a734d361c7c17503::LOFI::LOFI',
+    symbol: 'LOFI', decimals: 9, name: 'LOFI', scalar: 1_000_000_000,
+  },
+  HIPPO: {
+    address: '0x8993129d72e733985f7f1a00396cbd055bad6f817fee36576ce483c8bbb8b87b',
+    type: '0x8993129d72e733985f7f1a00396cbd055bad6f817fee36576ce483c8bbb8b87b::sudeng::SUDENG',
+    symbol: 'HIPPO', decimals: 9, name: 'sudeng', scalar: 1_000_000_000,
+  },
+  BLUB: {
+    address: '0xfa7ac3951fdca92c5200d468d31a365eb03b2be9936fde615e69f0c1274ad3a0',
+    type: '0xfa7ac3951fdca92c5200d468d31a365eb03b2be9936fde615e69f0c1274ad3a0::BLUB::BLUB',
+    symbol: 'BLUB', decimals: 2, name: 'BLUB', scalar: 100,
   },
 }
 
@@ -188,7 +252,7 @@ let metadataClient: { client: SuiClient; network: 'mainnet' | 'testnet' } | null
 function getMetadataClient(): SuiClient {
   if (!metadataClient || metadataClient.network !== activeNetwork) {
     metadataClient = {
-      client: new SuiClient({ url: getFullnodeUrl(activeNetwork) }),
+      client: new SuiClient({ url: getFullnodeUrl(activeNetwork), network: activeNetwork }),
       network: activeNetwork,
     }
   }
